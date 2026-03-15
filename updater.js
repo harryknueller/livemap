@@ -278,7 +278,9 @@ try {
     $settings.updater.pendingUpdate = $null
     $settings.updater.lastCheckedAt = (Get-Date).ToString('o')
 
-    $settings | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $SettingsPath -Encoding UTF8
+    $json = $settings | ConvertTo-Json -Depth 20
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($SettingsPath, $json, $utf8NoBom)
   }
 
   if ($IsPackaged -eq 'true') {

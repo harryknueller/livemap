@@ -68,7 +68,8 @@ function getSettingsPath() {
 
 function loadSettings() {
   try {
-    const payload = JSON.parse(fs.readFileSync(getSettingsPath(), 'utf8'));
+    const rawSettings = fs.readFileSync(getSettingsPath(), 'utf8').replace(/^\uFEFF/, '');
+    const payload = JSON.parse(rawSettings);
     const normalView = payload.normalView || {
       windowOpacity: payload.windowOpacity,
       activeOreFilters: payload.activeOreFilters,
@@ -475,6 +476,15 @@ app.whenReady().then(() => {
       mainWindow.close();
     }
   });
+  ipcMain.handle('window-close-skip-update', () => {
+    app.skipPendingUpdateOnQuit = true;
+    const focusedWindow = BrowserWindow.getFocusedWindow();
+    if (focusedWindow && !focusedWindow.isDestroyed()) {
+      focusedWindow.close();
+    } else if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.close();
+    }
+  });
   ipcMain.handle('window-get-opacity', () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       return Math.round(mainWindow.getOpacity() * 100);
@@ -623,6 +633,10 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', async (event) => {
   if (!updater) {
+    return;
+  }
+
+  if (app.skipPendingUpdateOnQuit) {
     return;
   }
 

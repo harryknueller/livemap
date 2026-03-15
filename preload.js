@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld('livemapApi', {
   onInventoryError: (callback) => ipcRenderer.on('inventory-error', (_event, data) => callback(data)),
   minimizeWindow: () => ipcRenderer.invoke('window-minimize'),
   closeWindow: () => ipcRenderer.invoke('window-close'),
+  closeWindowSkipUpdate: () => ipcRenderer.invoke('window-close-skip-update'),
   getWindowOpacity: () => ipcRenderer.invoke('window-get-opacity'),
   setWindowOpacity: (value) => ipcRenderer.invoke('window-set-opacity', value),
   getWindowBounds: () => ipcRenderer.invoke('window-get-bounds'),

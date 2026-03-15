@@ -2563,7 +2563,7 @@ async function runStartupUpdaterGate() {
           return;
         }
         startupUpdaterResolved = true;
-        await window.livemapApi.closeWindow();
+        await window.livemapApi.closeWindowSkipUpdate();
         resolve(false);
       };
 
@@ -2627,7 +2627,7 @@ async function runStartupUpdaterGate() {
             return;
           }
           startupUpdaterResolved = true;
-          await window.livemapApi.closeWindow();
+          await window.livemapApi.closeWindowSkipUpdate();
           resolve(false);
         }, { once: true });
         return;
