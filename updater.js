@@ -22,6 +22,11 @@ function ensureDir(directoryPath) {
   fs.mkdirSync(directoryPath, { recursive: true });
 }
 
+function quoteForCmd(value) {
+  const normalized = String(value ?? '');
+  return `"${normalized.replace(/"/g, '""')}"`;
+}
+
 function toErrorMessage(error) {
   if (!error) {
     return 'Unbekannter Fehler';
@@ -485,34 +490,70 @@ function createUpdater({
     installTriggered = true;
     const pendingRoot = path.dirname(path.dirname(pendingUpdate.sourceRoot));
     const scriptPath = path.join(pendingRoot, 'apply-update.ps1');
+    const launcherLogPath = path.join(pendingRoot, 'launcher.log');
     createApplyScript(scriptPath);
 
     const isPackaged = app.isPackaged ? 'true' : 'false';
     const relaunchAppPath = app.isPackaged ? '' : app.getAppPath();
+    const powershellPath = path.join(
+      process.env.SystemRoot || 'C:\\Windows',
+      'System32',
+      'WindowsPowerShell',
+      'v1.0',
+      'powershell.exe',
+    );
+    const commandLine = [
+      'start',
+      '""',
+      quoteForCmd(powershellPath),
+      '-NoProfile',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-File',
+      quoteForCmd(scriptPath),
+      quoteForCmd(pendingUpdate.sourceRoot),
+      quoteForCmd(app.getAppPath()),
+      quoteForCmd(process.execPath),
+      quoteForCmd(relaunchAppPath),
+      quoteForCmd(getSettingsPath()),
+      quoteForCmd(pendingUpdate.commit),
+      quoteForCmd(String(process.pid)),
+      quoteForCmd(isPackaged),
+    ].join(' ');
 
-    spawn(
-      'powershell',
+    fs.writeFileSync(
+      launcherLogPath,
       [
-        '-NoProfile',
-        '-ExecutionPolicy',
-        'Bypass',
-        '-File',
-        scriptPath,
-        pendingUpdate.sourceRoot,
-        app.getAppPath(),
-        process.execPath,
-        relaunchAppPath,
-        getSettingsPath(),
-        pendingUpdate.commit,
-        String(process.pid),
-        isPackaged,
-      ],
+        `[${new Date().toISOString()}] Launcher vorbereitet`,
+        `PowerShell: ${powershellPath}`,
+        `Script: ${scriptPath}`,
+        `Target: ${app.getAppPath()}`,
+        `Exec: ${process.execPath}`,
+        `Command: ${commandLine}`,
+        '',
+      ].join('\r\n'),
+      'utf8',
+    );
+
+    const launcher = spawn(
+      process.env.ComSpec || 'cmd.exe',
+      ['/d', '/s', '/c', commandLine],
       {
         detached: true,
         stdio: 'ignore',
         windowsHide: false,
       },
-    ).unref();
+    );
+
+    launcher.on('error', (error) => {
+      fs.appendFileSync(
+        launcherLogPath,
+        `[${new Date().toISOString()}] Launcher-Fehler: ${toErrorMessage(error)}\r\n`,
+        'utf8',
+      );
+    });
+
+    launcher.unref();
 
     return true;
   }
