@@ -255,11 +255,45 @@ try {
   Update-Status 'Dateien werden ersetzt' 52 'Neue Dateien werden in die Livemap kopiert.'
   Get-ChildItem -LiteralPath $SourceDir -Force | Where-Object { $exclude -notcontains $_.Name } | ForEach-Object {
     $destination = Join-Path $TargetDir $_.Name
-    if (Test-Path -LiteralPath $destination) {
-      Remove-Item -LiteralPath $destination -Recurse -Force
+    if ($_.PSIsContainer) {
+      if (Test-Path -LiteralPath $destination) {
+        Remove-Item -LiteralPath $destination -Recurse -Force
+      }
+      Copy-Item -LiteralPath $_.FullName -Destination $destination -Recurse -Force
+    } else {
+      $destinationDir = Split-Path -Parent $destination
+      if (-not (Test-Path -LiteralPath $destinationDir)) {
+        New-Item -ItemType Directory -Path $destinationDir -Force | Out-Null
+      }
+      Copy-Item -LiteralPath $_.FullName -Destination $destination -Force
     }
-    Copy-Item -LiteralPath $_.FullName -Destination $destination -Recurse -Force
     [System.Windows.Forms.Application]::DoEvents()
+  }
+
+  if ($SettingsPath) {
+    Update-Status 'Updater-Zustand wird aktualisiert' 74 'Commit-Stand und Pending-Update werden bereinigt.'
+    try {
+      if (Test-Path -LiteralPath $SettingsPath) {
+        $rawState = Get-Content -LiteralPath $SettingsPath -Raw
+        if ($rawState.Length -gt 0 -and $rawState[0] -eq [char]0xFEFF) {
+          $rawState = $rawState.Substring(1)
+        }
+        $state = $rawState | ConvertFrom-Json
+      } else {
+        $state = [pscustomobject]@{}
+      }
+    } catch {
+      $state = [pscustomobject]@{}
+    }
+
+    $state.currentCommit = $CommitSha
+    $state.latestCommit = $CommitSha
+    $state.lastCheckedAt = (Get-Date).ToString('o')
+    $state.pendingUpdate = $null
+
+    $json = $state | ConvertTo-Json -Depth 20
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($SettingsPath, $json, $utf8NoBom)
   }
 
   if ($IsPackaged -eq 'true') {
@@ -278,6 +312,7 @@ try {
   Start-Sleep -Milliseconds 1800
 } catch {
   $errorMessage = $_.Exception.Message
+  Write-UpdateLog ('Fehlerdetail: ' + $errorMessage)
   Update-Status 'Patch fehlgeschlagen' 100 $errorMessage
   $messageBody = 'Patch fehlgeschlagen.' + [Environment]::NewLine + $errorMessage + [Environment]::NewLine + [Environment]::NewLine + 'Log: ' + $logPath
   [System.Windows.Forms.MessageBox]::Show($messageBody, 'Livemap Patcher', 'OK', 'Error') | Out-Null
