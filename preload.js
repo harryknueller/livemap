@@ -1,0 +1,28 @@
+const { contextBridge, ipcRenderer } = require('electron');
+
+contextBridge.exposeInMainWorld('livemapApi', {
+  getOreData: () => ipcRenderer.invoke('get-ore-data'),
+  getUiSettings: () => ipcRenderer.invoke('ui-settings-get'),
+  setUiSettings: (patch) => ipcRenderer.invoke('ui-settings-set', patch),
+  onPlayerPosition: (callback) => ipcRenderer.on('player-position', (_event, data) => callback(data)),
+  onPlayerError: (callback) => ipcRenderer.on('player-error', (_event, data) => callback(data)),
+  onInventoryUpdate: (callback) => ipcRenderer.on('inventory-update', (_event, data) => callback(data)),
+  onInventoryError: (callback) => ipcRenderer.on('inventory-error', (_event, data) => callback(data)),
+  minimizeWindow: () => ipcRenderer.invoke('window-minimize'),
+  closeWindow: () => ipcRenderer.invoke('window-close'),
+  getWindowOpacity: () => ipcRenderer.invoke('window-get-opacity'),
+  setWindowOpacity: (value) => ipcRenderer.invoke('window-set-opacity', value),
+  getWindowBounds: () => ipcRenderer.invoke('window-get-bounds'),
+  setWindowBounds: (bounds) => ipcRenderer.invoke('window-set-bounds', bounds),
+  openRoutePlanner: () => ipcRenderer.invoke('route-planner-open'),
+  closeRoutePlanner: () => ipcRenderer.invoke('route-planner-close'),
+  getRouteState: () => ipcRenderer.invoke('route-state-get'),
+  previewRoute: (route) => ipcRenderer.invoke('route-preview-set', route),
+  startRoute: (route) => ipcRenderer.invoke('route-start-set', route),
+  abortRoute: () => ipcRenderer.invoke('route-abort'),
+  toggleRoutePause: () => ipcRenderer.invoke('route-pause-toggle'),
+  onRoutePreview: (callback) => ipcRenderer.on('route-preview', (_event, data) => callback(data)),
+  onRouteStart: (callback) => ipcRenderer.on('route-start', (_event, data) => callback(data)),
+  onRouteAbort: (callback) => ipcRenderer.on('route-abort', () => callback()),
+  onRouteState: (callback) => ipcRenderer.on('route-state', (_event, data) => callback(data)),
+});

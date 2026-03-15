@@ -1,0 +1,16 @@
+{
+  "name": "quinfall-livemap",
+  "version": "1.0.0",
+  "description": "Electron overlay for Quinfall ore and player positions",
+  "main": "main.js",
+  "scripts": {
+    "start": "set ELECTRON_RUN_AS_NODE=&& electron ."
+  },
+  "devDependencies": {
+    "electron": "^37.2.0"
+  },
+  "dependencies": {
+    "leaflet": "^1.9.4",
+    "leaflet.markercluster": "^1.5.3"
+  }
+}

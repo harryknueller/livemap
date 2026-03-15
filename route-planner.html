@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Routenplaner</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="planner-window">
+  <main class="planner-window-shell">
+    <section class="planner-panel planner-panel-standalone" aria-labelledby="routePlannerTitle">
+      <header class="planner-header">
+        <div>
+          <p class="planner-eyebrow">Route</p>
+          <h2 id="routePlannerTitle">Routenplaner</h2>
+        </div>
+        <div class="planner-header-actions">
+          <button class="planner-close" id="routePlannerCloseButton" type="button" aria-label="Routenplaner schließen">&#x274C;</button>
+        </div>
+      </header>
+      <div class="planner-content">
+        <section class="planner-settings">
+          <div class="planner-setting-row planner-setting-row-global">
+            <label class="planner-toggle">
+              <input id="routeUsePlayerStart" type="checkbox" checked>
+              <span>Spielerstandort berücksichtigen</span>
+            </label>
+          </div>
+          <div class="planner-section-head">
+            <strong>Marker-Auswahl</strong>
+            <span>Aktivieren und Mindestanzahl pro Typ festlegen</span>
+          </div>
+          <div class="planner-marker-list" id="routeMarkerList"></div>
+        </section>
+        <section class="planner-results">
+          <div class="planner-section-head planner-section-head-actions">
+            <div>
+              <strong id="routeResultsTitle">Vorschläge</strong>
+              <span id="routeResultsSubtitle">Nach Effizienz sortiert</span>
+            </div>
+            <button class="planner-primary" id="routeGenerateButton" type="button">Routen berechnen</button>
+          </div>
+          <div class="planner-results-list" id="routeResultsList"></div>
+        </section>
+      </div>
+    </section>
+  </main>
+  <div class="planner-simulation-overlay" id="routeSimulationOverlay" hidden>
+    <div class="planner-simulation-card">
+      <div class="planner-simulation-head">
+        <strong>Routen Simulation</strong>
+        <span id="routeSimulationPercent">0%</span>
+      </div>
+      <div class="planner-simulation-bar">
+        <div class="planner-simulation-bar-fill" id="routeSimulationBarFill"></div>
+      </div>
+      <div class="planner-simulation-meta">
+        <span>Simulierte Routen</span>
+        <strong id="routeSimulationCount">0</strong>
+      </div>
+    </div>
+  </div>
+  <script src="route-planner.js"></script>
+</body>
+</html>

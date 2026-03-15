@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Quinfall Livemap</title>
+  <link rel="stylesheet" href="node_modules/leaflet/dist/leaflet.css">
+  <link rel="stylesheet" href="node_modules/leaflet.markercluster/dist/MarkerCluster.css">
+  <link rel="stylesheet" href="node_modules/leaflet.markercluster/dist/MarkerCluster.Default.css">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="shell">
+    <header class="titlebar">
+      <div>
+        <p class="eyebrow">Overlay</p>
+        <h1>Quinfall Livemap</h1>
+      </div>
+      <div class="meta">
+        <div class="status-pills">
+          <span class="status-pill status-pill-channel" id="channelStatus"><span class="status-dot"></span><span class="status-label">CH ?</span></span>
+          <span class="status-pill status-pill-marker" id="markerStatus"><span class="status-dot"></span><span class="status-label">Marker</span></span>
+          <span class="status-pill status-pill-live" id="liveStatus"><span class="status-dot"></span><span class="status-label">Live</span></span>
+        </div>
+        <div class="window-tools">
+          <button class="window-button window-button-mapmode" id="mapModeButton" type="button" aria-label="Marker-Modus umschalten"><img src="map/switch.png" alt=""></button>
+          <div class="opacity-wrap">
+            <button class="opacity-button" id="opacityButton" type="button" aria-label="Sichtbarkeit einstellen">100%</button>
+            <div class="opacity-popover" id="opacityPopover" hidden>
+              <input id="opacitySlider" type="range" min="20" max="100" step="1" value="100" aria-label="Fenstersichtbarkeit">
+            </div>
+          </div>
+          <button class="window-button window-button-minimize" id="minimizeButton" type="button" aria-label="Minimieren">&#x2796;</button>
+          <button class="window-button window-button-close" id="closeButton" type="button" aria-label="Schliessen">&#x274C;</button>
+        </div>
+      </div>
+    </header>
+      <main class="board">
+        <div class="marker-only-toolbar" id="markerOnlyToolbar">
+          <span class="status-pill status-pill-live" id="compactLiveStatus"><span class="status-dot"></span><span class="status-label">Live</span></span>
+          <button class="window-button window-button-mapmode" id="compactMapModeButton" type="button" aria-label="Marker-Modus umschalten"><img src="map/switch.png" alt=""></button>
+          <button class="map-frame-button" id="mapFrameButton" type="button" aria-label="Container-Rahmen umschalten">&#x1F533;</button>
+          <div class="marker-only-inventory" id="compactInventoryPanel" aria-label="Inventargewicht">
+            <span class="marker-only-inventory-icon">&#x2696;&#xFE0F;</span>
+            <strong id="compactInventoryUsageTop">0%</strong>
+          </div>
+        </div>
+      <div class="marker-only-actions" id="markerOnlyActions">
+      </div>
+      <aside class="marker-only-filters" id="markerOnlyFilters"></aside>
+      <div class="map-viewport">
+        <div class="resize-handles" id="resizeHandles" aria-hidden="true">
+          <div class="resize-handle resize-handle-n" data-resize="n"></div>
+          <div class="resize-handle resize-handle-e" data-resize="e"></div>
+          <div class="resize-handle resize-handle-s" data-resize="s"></div>
+          <div class="resize-handle resize-handle-w" data-resize="w"></div>
+          <div class="resize-handle resize-handle-ne" data-resize="ne"></div>
+          <div class="resize-handle resize-handle-se" data-resize="se"></div>
+          <div class="resize-handle resize-handle-sw" data-resize="sw"></div>
+          <div class="resize-handle resize-handle-nw" data-resize="nw"></div>
+        </div>
+        <div class="coord-panel" id="coordPanel">
+          <div class="coord-row"><span>X</span><strong id="coordX">-</strong></div>
+          <div class="coord-row"><span>Z</span><strong id="coordZ">-</strong></div>
+          <div class="coord-row"><span>Y</span><strong id="coordY">-</strong></div>
+        </div>
+        <div class="inventory-panel" id="inventoryPanel">
+          <div class="inventory-head"><span class="inventory-icon">⚖️</span><strong id="inventoryUsageTop">0%</strong></div>
+          <div class="inventory-sub" id="inventoryUsage">Gewicht</div>
+        </div>
+        <button class="player-center-button route-planner-button" id="routePlannerButton" type="button" aria-label="Routenplaner">
+          <img src="map/routenplaner.png" alt="">
+        </button>
+        <button class="player-center-button nearest-marker-button" id="findNearestButton" type="button" aria-label="Nächsten Marker finden">
+          <img src="map/findnearest.png" alt="">
+        </button>
+        <button class="player-center-button" id="playerCenterButton" type="button" aria-label="Spieler zentrieren">
+          <img src="map/playercenter.png" alt="">
+        </button>
+        <canvas id="markerOnlyCanvas"></canvas>
+        <div id="map"></div>
+      </div>
+    </main>
+    <footer class="legend" id="legend"></footer>
+  </div>
+  <div class="legend-overlay-root" id="legendOverlayRoot"></div>
+  <div class="dialog-overlay" id="confirmDialog" hidden>
+    <div class="dialog-backdrop"></div>
+    <section class="dialog-panel" aria-labelledby="confirmDialogTitle">
+      <header class="dialog-header">
+        <div>
+          <p class="planner-eyebrow">Hinweis</p>
+          <h2 id="confirmDialogTitle">Aktion bestätigen</h2>
+        </div>
+      </header>
+      <div class="dialog-body" id="confirmDialogMessage"></div>
+      <div class="dialog-actions">
+        <button class="planner-secondary" id="confirmDialogCancel" type="button">Abbrechen</button>
+        <button class="planner-primary" id="confirmDialogConfirm" type="button">Bestätigen</button>
+      </div>
+    </section>
+  </div>
+  <div class="planner-overlay" id="routePlannerOverlay" hidden>
+    <div class="planner-backdrop" id="routePlannerBackdrop"></div>
+    <section class="planner-panel" aria-labelledby="routePlannerTitle">
+      <header class="planner-header">
+        <div>
+          <p class="planner-eyebrow">Route</p>
+          <h2 id="routePlannerTitle">Routenplaner</h2>
+        </div>
+        <button class="planner-close" id="routePlannerCloseButton" type="button" aria-label="Routenplaner schließen">&#x274C;</button>
+      </header>
+      <div class="planner-content">
+        <section class="planner-settings">
+          <div class="planner-setting-row planner-setting-row-global">
+            <label class="planner-toggle">
+              <input id="routeUsePlayerStart" type="checkbox" checked>
+              <span>Spielerstandort berücksichtigen</span>
+            </label>
+          </div>
+          <div class="planner-section-head">
+            <strong>Marker-Auswahl</strong>
+            <span>Aktivieren und Mindestanzahl pro Typ festlegen</span>
+          </div>
+          <div class="planner-marker-list" id="routeMarkerList"></div>
+          <div class="planner-actions">
+            <button class="planner-primary" id="routeGenerateButton" type="button">5 Routen berechnen</button>
+            <button class="planner-danger" id="routeAbortButton" type="button">Route abbrechen</button>
+          </div>
+        </section>
+        <section class="planner-results">
+          <div class="planner-section-head">
+            <strong>Vorschläge</strong>
+            <span>Nach Effizienz sortiert</span>
+          </div>
+          <div class="planner-results-list" id="routeResultsList"></div>
+        </section>
+      </div>
+    </section>
+  </div>
+  <script src="node_modules/leaflet/dist/leaflet.js"></script>
+  <script src="node_modules/leaflet.markercluster/dist/leaflet.markercluster.js"></script>
+  <script src="renderer.js"></script>
+</body>
+</html>
