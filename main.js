@@ -585,6 +585,7 @@ app.whenReady().then(() => {
   ipcMain.handle('updater-install-now', async () => {
     const started = await updater.applyPendingUpdateAndQuit();
     if (started) {
+      app.isQuittingForUpdate = true;
       app.quit();
     }
     return started;
