@@ -25,12 +25,6 @@ const DEFAULT_WINDOW_BOUNDS = {
 const DEFAULT_SETTINGS = {
   markerOnlyMode: false,
   markerCooldownsByChannel: {},
-  updater: {
-    currentCommit: null,
-    latestCommit: null,
-    lastCheckedAt: null,
-    pendingUpdate: null,
-  },
   normalView: {
     windowOpacity: 100,
     activeOreFilters: [],
@@ -86,10 +80,6 @@ function loadSettings() {
         ...DEFAULT_SETTINGS,
         markerOnlyMode: Boolean(payload.markerOnlyMode),
         markerCooldownsByChannel: payload.markerCooldownsByChannel || {},
-        updater: {
-          ...DEFAULT_SETTINGS.updater,
-          ...(payload.updater || {}),
-        },
         normalView: {
           ...DEFAULT_SETTINGS.normalView,
           ...normalView,
@@ -106,9 +96,6 @@ function loadSettings() {
       settings = {
         ...DEFAULT_SETTINGS,
         markerCooldownsByChannel: {},
-        updater: {
-          ...DEFAULT_SETTINGS.updater,
-        },
         normalView: {
           ...DEFAULT_SETTINGS.normalView,
           bounds: { ...DEFAULT_SETTINGS.normalView.bounds },
@@ -133,10 +120,6 @@ function updateSettings(patch) {
   settings = {
     ...settings,
     ...patch,
-    updater: {
-      ...settings.updater,
-      ...(patch.updater || {}),
-    },
     normalView: {
       ...settings.normalView,
       ...(patch.normalView || {}),
@@ -640,7 +623,7 @@ app.on('before-quit', async (event) => {
     return;
   }
 
-  const pendingUpdate = settings?.updater?.pendingUpdate;
+  const pendingUpdate = updater.getState()?.pendingUpdate;
   if (!pendingUpdate || app.isQuittingForUpdate) {
     return;
   }

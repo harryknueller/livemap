@@ -262,27 +262,6 @@ try {
     [System.Windows.Forms.Application]::DoEvents()
   }
 
-  if (Test-Path -LiteralPath $SettingsPath) {
-    Update-Status 'Einstellungen werden aktualisiert' 74 'Commit-Stand und Pending-Update werden bereinigt.'
-    try {
-      $settings = Get-Content -LiteralPath $SettingsPath -Raw | ConvertFrom-Json
-    } catch {
-      $settings = [pscustomobject]@{}
-    }
-
-    if (-not $settings.updater) {
-      $settings | Add-Member -MemberType NoteProperty -Name updater -Value ([pscustomobject]@{})
-    }
-
-    $settings.updater.currentCommit = $CommitSha
-    $settings.updater.pendingUpdate = $null
-    $settings.updater.lastCheckedAt = (Get-Date).ToString('o')
-
-    $json = $settings | ConvertTo-Json -Depth 20
-    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
-    [System.IO.File]::WriteAllText($SettingsPath, $json, $utf8NoBom)
-  }
-
   if ($IsPackaged -eq 'true') {
     Update-Status 'Livemap wird neu gestartet' 90 'Die gepackte App wird gestartet.'
     Start-Process -FilePath $ExecPath -WorkingDirectory $TargetDir
@@ -363,10 +342,14 @@ function createBootstrapScript(scriptPath, {
 
 function createUpdater({
   app,
-  getSettings,
-  updateSettings,
   onStateChange,
 }) {
+  const DEFAULT_UPDATER_STATE = {
+    currentCommit: null,
+    latestCommit: null,
+    lastCheckedAt: null,
+    pendingUpdate: null,
+  };
   let runtimeState = {
     status: 'idle',
     message: 'Updater bereit',
@@ -376,6 +359,34 @@ function createUpdater({
   };
   let installTriggered = false;
 
+  function getUpdaterStatePath() {
+    return path.join(app.getPath('userData'), 'updater-state.json');
+  }
+
+  function loadPersistedState() {
+    try {
+      const raw = fs.readFileSync(getUpdaterStatePath(), 'utf8').replace(/^\uFEFF/, '');
+      const parsed = JSON.parse(raw);
+      return {
+        ...DEFAULT_UPDATER_STATE,
+        ...(parsed || {}),
+      };
+    } catch (_error) {
+      return { ...DEFAULT_UPDATER_STATE };
+    }
+  }
+
+  let persistedState = loadPersistedState();
+
+  function savePersistedState(patch = {}) {
+    persistedState = {
+      ...persistedState,
+      ...patch,
+    };
+    fs.writeFileSync(getUpdaterStatePath(), JSON.stringify(persistedState, null, 2), 'utf8');
+    return persistedState;
+  }
+
   function emitState(patch) {
     runtimeState = {
       ...runtimeState,
@@ -384,28 +395,20 @@ function createUpdater({
     onStateChange(runtimeState);
   }
 
-  function getSettingsPath() {
-    return path.join(app.getPath('userData'), 'livemap-settings.json');
-  }
-
   function getPendingUpdateDirectory(commitSha) {
     return path.join(app.getPath('userData'), 'pending-updates', commitSha);
   }
 
   async function resolveCurrentCommit() {
-    const settings = getSettings();
-    const fromSettings = settings?.updater?.currentCommit;
+    const fromSettings = persistedState.currentCommit;
     if (fromSettings) {
       return fromSettings;
     }
 
     const gitCommit = getLocalGitCommit(app.getAppPath());
     if (gitCommit) {
-      updateSettings({
-        updater: {
-          ...(settings?.updater || {}),
-          currentCommit: gitCommit,
-        },
+      savePersistedState({
+        currentCommit: gitCommit,
       });
       return gitCommit;
     }
@@ -432,18 +435,14 @@ function createUpdater({
     await extractZipWindows(zipPath, extractDirectory);
     const sourceRoot = findExtractedSourceRoot(extractDirectory);
 
-    const settings = getSettings();
-    updateSettings({
-      updater: {
-        ...(settings?.updater || {}),
-        pendingUpdate: {
-          commit: latestCommit.sha,
-          sourceRoot,
-          preparedAt: new Date().toISOString(),
-        },
-        latestCommit: latestCommit.sha,
-        lastCheckedAt: new Date().toISOString(),
+    savePersistedState({
+      pendingUpdate: {
+        commit: latestCommit.sha,
+        sourceRoot,
+        preparedAt: new Date().toISOString(),
       },
+      latestCommit: latestCommit.sha,
+      lastCheckedAt: new Date().toISOString(),
     });
 
     return sourceRoot;
@@ -451,7 +450,7 @@ function createUpdater({
 
   async function checkForUpdates() {
     try {
-      const settings = getSettings();
+      persistedState = loadPersistedState();
       const currentCommit = await resolveCurrentCommit();
       emitState({
         status: 'checking',
@@ -460,7 +459,7 @@ function createUpdater({
       });
 
       const latestCommit = await fetchLatestCommit();
-      const pendingCommit = settings?.updater?.pendingUpdate?.commit;
+      const pendingCommit = persistedState.pendingUpdate?.commit;
 
       if (pendingCommit && pendingCommit === latestCommit.sha) {
         emitState({
@@ -474,12 +473,11 @@ function createUpdater({
       }
 
       if (currentCommit && currentCommit === latestCommit.sha) {
-        updateSettings({
-          updater: {
-            ...(settings?.updater || {}),
-            latestCommit: latestCommit.sha,
-            lastCheckedAt: new Date().toISOString(),
-          },
+        savePersistedState({
+          currentCommit,
+          latestCommit: latestCommit.sha,
+          lastCheckedAt: new Date().toISOString(),
+          pendingUpdate: null,
         });
         emitState({
           status: 'up-to-date',
@@ -520,7 +518,7 @@ function createUpdater({
   function getState() {
     return {
       ...runtimeState,
-      pendingUpdate: getSettings()?.updater?.pendingUpdate || null,
+      pendingUpdate: persistedState.pendingUpdate || null,
     };
   }
 
@@ -529,7 +527,8 @@ function createUpdater({
       return false;
     }
 
-    const pendingUpdate = getSettings()?.updater?.pendingUpdate;
+    persistedState = loadPersistedState();
+    const pendingUpdate = persistedState.pendingUpdate;
     if (!pendingUpdate?.sourceRoot || !fs.existsSync(pendingUpdate.sourceRoot)) {
       emitState({
         status: 'error',
@@ -561,7 +560,7 @@ function createUpdater({
       targetDir: app.getAppPath(),
       execPath: process.execPath,
       appPath: relaunchAppPath,
-      settingsPath: getSettingsPath(),
+      settingsPath: getUpdaterStatePath(),
       commitSha: pendingUpdate.commit,
       waitPid: String(process.pid),
       isPackaged,
