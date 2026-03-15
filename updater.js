@@ -22,11 +22,6 @@ function ensureDir(directoryPath) {
   fs.mkdirSync(directoryPath, { recursive: true });
 }
 
-function quoteForCmd(value) {
-  const normalized = String(value ?? '');
-  return `"${normalized.replace(/"/g, '""')}"`;
-}
-
 function toErrorMessage(error) {
   if (!error) {
     return 'Unbekannter Fehler';
@@ -502,24 +497,21 @@ function createUpdater({
       'v1.0',
       'powershell.exe',
     );
-    const commandLine = [
-      'start',
-      '""',
-      quoteForCmd(powershellPath),
+    const powershellArgs = [
       '-NoProfile',
       '-ExecutionPolicy',
       'Bypass',
       '-File',
-      quoteForCmd(scriptPath),
-      quoteForCmd(pendingUpdate.sourceRoot),
-      quoteForCmd(app.getAppPath()),
-      quoteForCmd(process.execPath),
-      quoteForCmd(relaunchAppPath),
-      quoteForCmd(getSettingsPath()),
-      quoteForCmd(pendingUpdate.commit),
-      quoteForCmd(String(process.pid)),
-      quoteForCmd(isPackaged),
-    ].join(' ');
+      scriptPath,
+      pendingUpdate.sourceRoot,
+      app.getAppPath(),
+      process.execPath,
+      relaunchAppPath,
+      getSettingsPath(),
+      pendingUpdate.commit,
+      String(process.pid),
+      isPackaged,
+    ];
 
     fs.writeFileSync(
       launcherLogPath,
@@ -529,20 +521,26 @@ function createUpdater({
         `Script: ${scriptPath}`,
         `Target: ${app.getAppPath()}`,
         `Exec: ${process.execPath}`,
-        `Command: ${commandLine}`,
+        `Args: ${JSON.stringify(powershellArgs)}`,
         '',
       ].join('\r\n'),
       'utf8',
     );
 
     const launcher = spawn(
-      process.env.ComSpec || 'cmd.exe',
-      ['/d', '/s', '/c', commandLine],
+      powershellPath,
+      powershellArgs,
       {
         detached: true,
         stdio: 'ignore',
         windowsHide: false,
       },
+    );
+
+    fs.appendFileSync(
+      launcherLogPath,
+      `[${new Date().toISOString()}] Launcher PID: ${launcher.pid || 'unbekannt'}\r\n`,
+      'utf8',
     );
 
     launcher.on('error', (error) => {
