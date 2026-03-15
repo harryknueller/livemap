@@ -2,12 +2,14 @@ const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
+const { createUpdater } = require('./updater');
 
 let playerProcess;
 let inventoryProcess;
 let mainWindow = null;
 let plannerWindow = null;
 let settings;
+let updater;
 let lastPlayerPosition = null;
 let routeState = {
   activeRoute: null,
@@ -23,6 +25,12 @@ const DEFAULT_WINDOW_BOUNDS = {
 const DEFAULT_SETTINGS = {
   markerOnlyMode: false,
   markerCooldownsByChannel: {},
+  updater: {
+    currentCommit: null,
+    latestCommit: null,
+    lastCheckedAt: null,
+    pendingUpdate: null,
+  },
   normalView: {
     windowOpacity: 100,
     activeOreFilters: [],
@@ -77,6 +85,10 @@ function loadSettings() {
         ...DEFAULT_SETTINGS,
         markerOnlyMode: Boolean(payload.markerOnlyMode),
         markerCooldownsByChannel: payload.markerCooldownsByChannel || {},
+        updater: {
+          ...DEFAULT_SETTINGS.updater,
+          ...(payload.updater || {}),
+        },
         normalView: {
           ...DEFAULT_SETTINGS.normalView,
           ...normalView,
@@ -93,6 +105,9 @@ function loadSettings() {
       settings = {
         ...DEFAULT_SETTINGS,
         markerCooldownsByChannel: {},
+        updater: {
+          ...DEFAULT_SETTINGS.updater,
+        },
         normalView: {
           ...DEFAULT_SETTINGS.normalView,
           bounds: { ...DEFAULT_SETTINGS.normalView.bounds },
@@ -117,6 +132,10 @@ function updateSettings(patch) {
   settings = {
     ...settings,
     ...patch,
+    updater: {
+      ...settings.updater,
+      ...(patch.updater || {}),
+    },
     normalView: {
       ...settings.normalView,
       ...(patch.normalView || {}),
@@ -160,6 +179,11 @@ function sendToWindow(window, channel, payload) {
 function broadcastRouteState() {
   sendToWindow(mainWindow, 'route-state', routeState);
   sendToWindow(plannerWindow, 'route-state', routeState);
+}
+
+function broadcastUpdaterState(state) {
+  sendToWindow(mainWindow, 'updater-state', state);
+  sendToWindow(plannerWindow, 'updater-state', state);
 }
 
 function loadOreData() {
@@ -342,6 +366,9 @@ function createWindow() {
   win.loadFile('index.html');
   startPlayerStream(win);
   startInventoryStream(win);
+  if (updater) {
+    sendToWindow(win, 'updater-state', updater.getState());
+  }
 
   win.on('closed', () => {
     if (mainWindow === win) {
@@ -396,6 +423,9 @@ function createPlannerWindow() {
       if (lastPlayerPosition) {
         sendToWindow(plannerWindow, 'player-position', lastPlayerPosition);
       }
+      if (updater) {
+        sendToWindow(plannerWindow, 'updater-state', updater.getState());
+      }
     }
   });
   plannerWindow.on('show', keepPlannerOnTop);
@@ -411,6 +441,12 @@ function createPlannerWindow() {
 
 app.whenReady().then(() => {
   loadSettings();
+  updater = createUpdater({
+    app,
+    getSettings: () => settings,
+    updateSettings,
+    onStateChange: broadcastUpdaterState,
+  });
   ipcMain.handle('get-ore-data', () => loadOreData());
   ipcMain.handle('ui-settings-get', () => settings);
   ipcMain.handle('ui-settings-set', (_event, patch) => {
@@ -545,7 +581,16 @@ app.whenReady().then(() => {
     broadcastRouteState();
     return true;
   });
+  ipcMain.handle('updater-state-get', () => updater.getState());
+  ipcMain.handle('updater-install-now', async () => {
+    const started = await updater.applyPendingUpdateAndQuit();
+    if (started) {
+      app.quit();
+    }
+    return started;
+  });
   createWindow();
+  updater.checkForUpdates();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -564,5 +609,25 @@ app.on('window-all-closed', () => {
 
   if (process.platform !== 'darwin') {
     app.quit();
+  }
+});
+
+app.on('before-quit', async (event) => {
+  if (!updater) {
+    return;
+  }
+
+  const pendingUpdate = settings?.updater?.pendingUpdate;
+  if (!pendingUpdate || app.isQuittingForUpdate) {
+    return;
+  }
+
+  event.preventDefault();
+  app.isQuittingForUpdate = true;
+  const started = await updater.applyPendingUpdateAndQuit();
+  if (started) {
+    app.quit();
+  } else {
+    app.isQuittingForUpdate = false;
   }
 });

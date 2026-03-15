@@ -21,8 +21,11 @@ contextBridge.exposeInMainWorld('livemapApi', {
   startRoute: (route) => ipcRenderer.invoke('route-start-set', route),
   abortRoute: () => ipcRenderer.invoke('route-abort'),
   toggleRoutePause: () => ipcRenderer.invoke('route-pause-toggle'),
+  getUpdaterState: () => ipcRenderer.invoke('updater-state-get'),
+  installUpdateNow: () => ipcRenderer.invoke('updater-install-now'),
   onRoutePreview: (callback) => ipcRenderer.on('route-preview', (_event, data) => callback(data)),
   onRouteStart: (callback) => ipcRenderer.on('route-start', (_event, data) => callback(data)),
   onRouteAbort: (callback) => ipcRenderer.on('route-abort', () => callback()),
   onRouteState: (callback) => ipcRenderer.on('route-state', (_event, data) => callback(data)),
+  onUpdaterState: (callback) => ipcRenderer.on('updater-state', (_event, data) => callback(data)),
 });

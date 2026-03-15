@@ -10,6 +10,26 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+  <div class="startup-updater" id="startupUpdater">
+    <div class="startup-updater-card">
+      <p class="planner-eyebrow">Updater</p>
+      <h2 id="startupUpdaterTitle">Prüfe auf Updates</h2>
+      <p class="startup-updater-message" id="startupUpdaterMessage">Bitte kurz warten...</p>
+      <div class="startup-updater-version" id="startupUpdaterVersion" hidden>-</div>
+      <div class="startup-updater-commit" id="startupUpdaterCommit" hidden>-</div>
+      <div class="startup-updater-progress">
+        <span class="startup-updater-spinner" aria-hidden="true"></span>
+        <span class="startup-updater-progress-label" id="startupUpdaterProgressLabel">Prüfung läuft</span>
+      </div>
+      <div class="startup-updater-bar">
+        <div class="startup-updater-bar-fill" id="startupUpdaterBarFill"></div>
+      </div>
+      <div class="startup-updater-actions" id="startupUpdaterActions" hidden>
+        <button class="planner-primary" id="startupUpdaterPatchButton" type="button">Patchen</button>
+        <button class="planner-danger" id="startupUpdaterExitButton" type="button">Beenden</button>
+      </div>
+    </div>
+  </div>
   <div class="shell">
     <header class="titlebar">
       <div>
@@ -84,6 +104,15 @@
     <footer class="legend" id="legend"></footer>
   </div>
   <div class="legend-overlay-root" id="legendOverlayRoot"></div>
+  <div class="update-toast" id="updateToast" hidden>
+    <div class="update-toast-body">
+      <strong>Updater</strong>
+      <span id="updateToastMessage">Prüfe auf Updates...</span>
+    </div>
+    <div class="update-toast-actions">
+      <button class="planner-primary" id="updateToastInstallButton" type="button" hidden>Jetzt installieren</button>
+    </div>
+  </div>
   <div class="dialog-overlay" id="confirmDialog" hidden>
     <div class="dialog-backdrop"></div>
     <section class="dialog-panel" aria-labelledby="confirmDialogTitle">

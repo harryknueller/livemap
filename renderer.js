@@ -77,6 +77,19 @@ const confirmDialog = document.getElementById('confirmDialog');
 const confirmDialogMessage = document.getElementById('confirmDialogMessage');
 const confirmDialogCancel = document.getElementById('confirmDialogCancel');
 const confirmDialogConfirm = document.getElementById('confirmDialogConfirm');
+const updateToast = document.getElementById('updateToast');
+const updateToastMessage = document.getElementById('updateToastMessage');
+const updateToastInstallButton = document.getElementById('updateToastInstallButton');
+const startupUpdater = document.getElementById('startupUpdater');
+const startupUpdaterTitle = document.getElementById('startupUpdaterTitle');
+const startupUpdaterMessage = document.getElementById('startupUpdaterMessage');
+const startupUpdaterVersion = document.getElementById('startupUpdaterVersion');
+const startupUpdaterCommit = document.getElementById('startupUpdaterCommit');
+const startupUpdaterProgressLabel = document.getElementById('startupUpdaterProgressLabel');
+const startupUpdaterBarFill = document.getElementById('startupUpdaterBarFill');
+const startupUpdaterActions = document.getElementById('startupUpdaterActions');
+const startupUpdaterPatchButton = document.getElementById('startupUpdaterPatchButton');
+const startupUpdaterExitButton = document.getElementById('startupUpdaterExitButton');
 
 const TILE_COLUMNS = 5;
 const TILE_ROWS = 4;
@@ -144,6 +157,9 @@ let routePlannerDragState = null;
 let routePlannerWindowBoundsBackup = null;
 let routePreviewPlaybackToken = 0;
 let confirmDialogResolver = null;
+let updaterState = null;
+let startupUpdaterResolved = false;
+let startupUpdaterStartedAt = 0;
 const CHANNEL_BY_PORT = {
   6061: { label: '🛡️ CH 1', state: 'normal' },
   6062: { label: '🛡️ CH 2', state: 'normal' },
@@ -2365,6 +2381,238 @@ function setStatusPill(element, label, tone) {
   element.innerHTML = `<span class="status-dot"></span><span class="status-label">${label}</span>`;
 }
 
+function renderUpdaterState(nextState) {
+  updaterState = nextState || null;
+  if (!updateToast || !updateToastMessage || !updaterState) {
+    return;
+  }
+
+  const visibleStates = new Set(['checking', 'downloading', 'ready', 'error']);
+  updateToast.hidden = !visibleStates.has(updaterState.status);
+  updateToast.dataset.state = updaterState.status || 'idle';
+  updateToastMessage.textContent = updaterState.message || 'Updater bereit';
+
+  if (updateToastInstallButton) {
+    updateToastInstallButton.hidden = updaterState.status !== 'ready';
+  }
+}
+
+function renderStartupUpdaterState(state) {
+  if (!startupUpdater || !startupUpdaterTitle || !startupUpdaterMessage || !startupUpdaterBarFill) {
+    return;
+  }
+
+  const status = state?.status || 'checking';
+  const shouldShowPatchActions = status === 'ready'
+    && Boolean(state?.latestCommit)
+    && state?.currentCommit !== state?.latestCommit;
+  startupUpdater.dataset.state = status;
+  const currentVersion = state?.currentCommit ? state.currentCommit.slice(0, 7) : 'lokal';
+  const nextVersion = state?.latestCommit ? state.latestCommit.slice(0, 7) : '-';
+
+  if (startupUpdaterVersion) {
+    startupUpdaterVersion.hidden = !(state?.currentCommit || state?.latestCommit);
+    startupUpdaterVersion.innerHTML = `<strong>${currentVersion}</strong> → <strong>${nextVersion}</strong>`;
+  }
+
+  if (startupUpdaterCommit) {
+    startupUpdaterCommit.hidden = !state?.latestMessage;
+    startupUpdaterCommit.innerHTML = state?.latestMessage
+      ? `<strong>Commit:</strong> ${state.latestMessage}`
+      : '';
+  }
+
+  if (startupUpdaterActions) {
+    startupUpdaterActions.hidden = !shouldShowPatchActions;
+  }
+  if (startupUpdaterPatchButton) {
+    startupUpdaterPatchButton.hidden = !shouldShowPatchActions;
+  }
+  if (startupUpdaterExitButton) {
+    startupUpdaterExitButton.hidden = !shouldShowPatchActions;
+  }
+
+  if (status === 'ready') {
+    startupUpdaterTitle.textContent = 'Update verfügbar';
+    startupUpdaterMessage.textContent = 'Ein neuer Patch wurde gefunden. Du musst jetzt patchen oder die App beenden.';
+    startupUpdaterBarFill.style.width = '100%';
+    if (startupUpdaterProgressLabel) {
+      startupUpdaterProgressLabel.textContent = 'Patch bereit';
+    }
+    return;
+  }
+
+  if (status === 'up-to-date') {
+    startupUpdaterTitle.textContent = 'Kein Update verfügbar';
+    startupUpdaterMessage.textContent = 'Die Livemap ist aktuell. Starte Overlay...';
+    startupUpdaterBarFill.style.width = '100%';
+    if (startupUpdaterProgressLabel) {
+      startupUpdaterProgressLabel.textContent = 'Kein Patch nötig';
+    }
+    return;
+  }
+
+  if (status === 'error') {
+    startupUpdaterTitle.textContent = 'Updateprüfung fehlgeschlagen';
+    startupUpdaterMessage.textContent = 'Die Livemap startet jetzt mit dem lokalen Stand.';
+    startupUpdaterBarFill.style.width = '100%';
+    if (startupUpdaterProgressLabel) {
+      startupUpdaterProgressLabel.textContent = 'Lokalen Stand verwenden';
+    }
+    return;
+  }
+
+  if (status === 'downloading') {
+    startupUpdaterTitle.textContent = 'Update wird vorbereitet';
+    startupUpdaterMessage.textContent = state?.message || 'Patch wird heruntergeladen und vorbereitet...';
+    startupUpdaterBarFill.style.width = '72%';
+    if (startupUpdaterProgressLabel) {
+      startupUpdaterProgressLabel.textContent = 'Patch wird geladen';
+    }
+    return;
+  }
+
+  startupUpdaterTitle.textContent = 'Prüfe auf Updates';
+  startupUpdaterMessage.textContent = state?.message || 'Bitte kurz warten...';
+  startupUpdaterBarFill.style.width = '28%';
+  if (startupUpdaterProgressLabel) {
+    startupUpdaterProgressLabel.textContent = 'Prüfung läuft';
+  }
+}
+
+function showStartupUpdater() {
+  if (!startupUpdater) {
+    return;
+  }
+
+  startupUpdater.hidden = false;
+  requestAnimationFrame(() => {
+    startupUpdater.dataset.visible = 'true';
+  });
+}
+
+async function hideStartupUpdater() {
+  if (!startupUpdater) {
+    return;
+  }
+
+  delete startupUpdater.dataset.visible;
+  await wait(220);
+  startupUpdater.hidden = true;
+}
+
+async function runStartupUpdaterGate() {
+  startupUpdaterStartedAt = Date.now();
+  showStartupUpdater();
+  const initialState = await window.livemapApi.getUpdaterState();
+  renderStartupUpdaterState(initialState);
+
+  const waitForStartupUpdaterMinimum = async () => {
+    const elapsed = Date.now() - startupUpdaterStartedAt;
+    const remaining = Math.max(0, 5000 - elapsed);
+    if (remaining > 0) {
+      await wait(remaining);
+    }
+  };
+
+  if (initialState?.status === 'ready') {
+    await waitForStartupUpdaterMinimum();
+    renderStartupUpdaterState(initialState);
+    return new Promise((resolve) => {
+      const patchNow = async () => {
+        if (startupUpdaterResolved) {
+          return;
+        }
+        startupUpdaterResolved = true;
+        startupUpdater.dataset.state = 'installing';
+        startupUpdaterTitle.textContent = 'Patch wird installiert';
+        startupUpdaterMessage.textContent = 'Die Livemap wird gleich geschlossen, aktualisiert und neu gestartet.';
+        startupUpdaterBarFill.style.width = '100%';
+        if (startupUpdaterProgressLabel) {
+          startupUpdaterProgressLabel.textContent = 'Patch läuft';
+        }
+        await window.livemapApi.installUpdateNow();
+        resolve(false);
+      };
+
+      const exitApp = async () => {
+        if (startupUpdaterResolved) {
+          return;
+        }
+        startupUpdaterResolved = true;
+        await window.livemapApi.closeWindow();
+        resolve(false);
+      };
+
+      startupUpdaterPatchButton?.addEventListener('click', () => { void patchNow(); }, { once: true });
+      startupUpdaterExitButton?.addEventListener('click', () => { void exitApp(); }, { once: true });
+    });
+  }
+
+  if (initialState?.status === 'up-to-date') {
+    startupUpdaterResolved = true;
+    await waitForStartupUpdaterMinimum();
+    await hideStartupUpdater();
+    return true;
+  }
+
+  if (initialState?.status === 'error') {
+    startupUpdaterResolved = true;
+    await waitForStartupUpdaterMinimum();
+    await hideStartupUpdater();
+    return true;
+  }
+
+  return new Promise((resolve) => {
+    const handleState = async (state) => {
+      if (startupUpdaterResolved) {
+        return;
+      }
+
+      renderStartupUpdaterState(state);
+      if (state?.status === 'ready') {
+        await waitForStartupUpdaterMinimum();
+        renderStartupUpdaterState(state);
+        startupUpdaterPatchButton?.addEventListener('click', async () => {
+          if (startupUpdaterResolved) {
+            return;
+          }
+          startupUpdaterResolved = true;
+          startupUpdater.dataset.state = 'installing';
+          startupUpdaterTitle.textContent = 'Patch wird installiert';
+          startupUpdaterMessage.textContent = 'Die Livemap wird gleich geschlossen, aktualisiert und neu gestartet.';
+          startupUpdaterBarFill.style.width = '100%';
+          if (startupUpdaterProgressLabel) {
+            startupUpdaterProgressLabel.textContent = 'Patch läuft';
+          }
+          await window.livemapApi.installUpdateNow();
+          resolve(false);
+        }, { once: true });
+        startupUpdaterExitButton?.addEventListener('click', async () => {
+          if (startupUpdaterResolved) {
+            return;
+          }
+          startupUpdaterResolved = true;
+          await window.livemapApi.closeWindow();
+          resolve(false);
+        }, { once: true });
+        return;
+      }
+
+      if (state?.status === 'up-to-date' || state?.status === 'error') {
+        startupUpdaterResolved = true;
+        await waitForStartupUpdaterMinimum();
+        await hideStartupUpdater();
+        resolve(true);
+      }
+    };
+
+    window.livemapApi.onUpdaterState((state) => {
+      void handleState(state);
+    });
+  });
+}
+
 function setChannelStatus(port) {
   const channel = CHANNEL_BY_PORT[port] || { label: 'CH ?', state: 'normal' };
   if (port && Number(port) !== currentChannelPort) {
@@ -2730,6 +2978,11 @@ function stopResizeSession() {
 
 async function bootstrap() {
   try {
+    const canContinue = await runStartupUpdaterGate();
+    if (!canContinue) {
+      return;
+    }
+
     uiSettings = await window.livemapApi.getUiSettings();
     oreData = await window.livemapApi.getOreData();
     isMarkerOnlyMode = Boolean(uiSettings?.markerOnlyMode);
@@ -2774,6 +3027,11 @@ async function bootstrap() {
 
     window.livemapApi.onInventoryError((message) => {
       console.error(message);
+    });
+
+    renderUpdaterState(await window.livemapApi.getUpdaterState());
+    window.livemapApi.onUpdaterState((state) => {
+      renderUpdaterState(state);
     });
 
     if (playerCenterButton) {
@@ -2930,6 +3188,17 @@ async function bootstrap() {
     if (closeButton) {
       closeButton.addEventListener('click', () => {
         window.livemapApi.closeWindow();
+      });
+    }
+
+    if (updateToastInstallButton) {
+      updateToastInstallButton.addEventListener('click', async () => {
+        updateToastInstallButton.disabled = true;
+        try {
+          await window.livemapApi.installUpdateNow();
+        } finally {
+          updateToastInstallButton.disabled = false;
+        }
       });
     }
 
