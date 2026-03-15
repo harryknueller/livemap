@@ -1,0 +1,2 @@
+Updater smoke test marker
+Created: 2026-03-15
