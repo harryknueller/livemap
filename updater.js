@@ -11,7 +11,7 @@ function getApiBase() {
 }
 
 function getZipUrl(commitSha = GITHUB_BRANCH) {
-  return `${getApiBase()}/zipball/${commitSha}`;
+  return `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/archive/${commitSha}.zip`;
 }
 
 function getCommitUrl() {
@@ -70,7 +70,6 @@ async function downloadFile(url, targetPath) {
   const response = await fetch(url, {
     headers: {
       'User-Agent': 'quinfall-livemap-updater',
-      Accept: 'application/octet-stream',
     },
   });
 
@@ -110,6 +109,10 @@ function runPowerShell(command, args) {
   });
 }
 
+function escapePowerShellLiteral(value) {
+  return String(value).replace(/'/g, "''");
+}
+
 async function extractZipWindows(zipPath, extractDirectory) {
   if (fs.existsSync(extractDirectory)) {
     fs.rmSync(extractDirectory, { recursive: true, force: true });
@@ -117,8 +120,8 @@ async function extractZipWindows(zipPath, extractDirectory) {
   ensureDir(extractDirectory);
 
   await runPowerShell(
-    'Expand-Archive -LiteralPath $args[0] -DestinationPath $args[1] -Force',
-    [zipPath, extractDirectory],
+    `Expand-Archive -LiteralPath '${escapePowerShellLiteral(zipPath)}' -DestinationPath '${escapePowerShellLiteral(extractDirectory)}' -Force`,
+    [],
   );
 }
 

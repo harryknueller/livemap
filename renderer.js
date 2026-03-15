@@ -86,6 +86,7 @@ const startupUpdaterMessage = document.getElementById('startupUpdaterMessage');
 const startupUpdaterVersion = document.getElementById('startupUpdaterVersion');
 const startupUpdaterCommit = document.getElementById('startupUpdaterCommit');
 const startupUpdaterProgressLabel = document.getElementById('startupUpdaterProgressLabel');
+const startupUpdaterStatusValue = document.getElementById('startupUpdaterStatusValue');
 const startupUpdaterBarFill = document.getElementById('startupUpdaterBarFill');
 const startupUpdaterActions = document.getElementById('startupUpdaterActions');
 const startupUpdaterPatchButton = document.getElementById('startupUpdaterPatchButton');
@@ -2422,6 +2423,12 @@ function renderStartupUpdaterState(state) {
       : '';
   }
 
+  const setStartupStatusText = (text) => {
+    if (startupUpdaterStatusValue) {
+      startupUpdaterStatusValue.textContent = text;
+    }
+  };
+
   if (startupUpdaterActions) {
     startupUpdaterActions.hidden = !shouldShowPatchActions;
   }
@@ -2436,6 +2443,7 @@ function renderStartupUpdaterState(state) {
     startupUpdaterTitle.textContent = 'Update verfügbar';
     startupUpdaterMessage.textContent = 'Ein neuer Patch wurde gefunden. Du musst jetzt patchen oder die App beenden.';
     startupUpdaterBarFill.style.width = '100%';
+    setStartupStatusText('Patch wurde vorbereitet und wartet auf deine Aktion.');
     if (startupUpdaterProgressLabel) {
       startupUpdaterProgressLabel.textContent = 'Patch bereit';
     }
@@ -2446,6 +2454,7 @@ function renderStartupUpdaterState(state) {
     startupUpdaterTitle.textContent = 'Kein Update verfügbar';
     startupUpdaterMessage.textContent = 'Die Livemap ist aktuell. Starte Overlay...';
     startupUpdaterBarFill.style.width = '100%';
+    setStartupStatusText('Kein neuer Commit gefunden.');
     if (startupUpdaterProgressLabel) {
       startupUpdaterProgressLabel.textContent = 'Kein Patch nötig';
     }
@@ -2456,6 +2465,7 @@ function renderStartupUpdaterState(state) {
     startupUpdaterTitle.textContent = 'Updateprüfung fehlgeschlagen';
     startupUpdaterMessage.textContent = 'Die Livemap startet jetzt mit dem lokalen Stand.';
     startupUpdaterBarFill.style.width = '100%';
+    setStartupStatusText('Patch-Prüfung fehlgeschlagen. Lokaler Stand wird verwendet.');
     if (startupUpdaterProgressLabel) {
       startupUpdaterProgressLabel.textContent = 'Lokalen Stand verwenden';
     }
@@ -2466,6 +2476,7 @@ function renderStartupUpdaterState(state) {
     startupUpdaterTitle.textContent = 'Update wird vorbereitet';
     startupUpdaterMessage.textContent = state?.message || 'Patch wird heruntergeladen und vorbereitet...';
     startupUpdaterBarFill.style.width = '72%';
+    setStartupStatusText('Archiv wird von GitHub geladen und vorbereitet.');
     if (startupUpdaterProgressLabel) {
       startupUpdaterProgressLabel.textContent = 'Patch wird geladen';
     }
@@ -2475,6 +2486,7 @@ function renderStartupUpdaterState(state) {
   startupUpdaterTitle.textContent = 'Prüfe auf Updates';
   startupUpdaterMessage.textContent = state?.message || 'Bitte kurz warten...';
   startupUpdaterBarFill.style.width = '28%';
+  setStartupStatusText('GitHub-Stand wird geprüft.');
   if (startupUpdaterProgressLabel) {
     startupUpdaterProgressLabel.textContent = 'Prüfung läuft';
   }
@@ -2528,8 +2540,19 @@ async function runStartupUpdaterGate() {
         startupUpdaterTitle.textContent = 'Patch wird installiert';
         startupUpdaterMessage.textContent = 'Die Livemap wird gleich geschlossen, aktualisiert und neu gestartet.';
         startupUpdaterBarFill.style.width = '100%';
+        if (startupUpdaterStatusValue) {
+          startupUpdaterStatusValue.textContent = 'Patchskript wird gestartet.';
+        }
         if (startupUpdaterProgressLabel) {
           startupUpdaterProgressLabel.textContent = 'Patch läuft';
+        }
+        await wait(250);
+        if (startupUpdaterStatusValue) {
+          startupUpdaterStatusValue.textContent = 'Livemap wird beendet.';
+        }
+        await wait(250);
+        if (startupUpdaterStatusValue) {
+          startupUpdaterStatusValue.textContent = 'Dateien werden ersetzt und die App wird neu gestartet.';
         }
         await window.livemapApi.installUpdateNow();
         resolve(false);
@@ -2582,8 +2605,19 @@ async function runStartupUpdaterGate() {
           startupUpdaterTitle.textContent = 'Patch wird installiert';
           startupUpdaterMessage.textContent = 'Die Livemap wird gleich geschlossen, aktualisiert und neu gestartet.';
           startupUpdaterBarFill.style.width = '100%';
+          if (startupUpdaterStatusValue) {
+            startupUpdaterStatusValue.textContent = 'Patchskript wird gestartet.';
+          }
           if (startupUpdaterProgressLabel) {
             startupUpdaterProgressLabel.textContent = 'Patch läuft';
+          }
+          await wait(250);
+          if (startupUpdaterStatusValue) {
+            startupUpdaterStatusValue.textContent = 'Livemap wird beendet.';
+          }
+          await wait(250);
+          if (startupUpdaterStatusValue) {
+            startupUpdaterStatusValue.textContent = 'Dateien werden ersetzt und die App wird neu gestartet.';
           }
           await window.livemapApi.installUpdateNow();
           resolve(false);
