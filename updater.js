@@ -148,18 +148,35 @@ param(
   [string]$IsPackaged
 )
 
-Start-Sleep -Milliseconds 800
+$logPath = Join-Path (Split-Path -Parent $SourceDir) 'apply-update.log'
 
-for ($i = 0; $i -lt 120; $i++) {
+function Write-UpdateLog([string]$Message) {
+  $timestamp = (Get-Date).ToString('o')
+  Add-Content -LiteralPath $logPath -Value "$timestamp $Message"
+}
+
+Write-UpdateLog "Patchlauf gestartet"
+Start-Sleep -Milliseconds 500
+
+for ($i = 0; $i -lt 20; $i++) {
   $processStillRunning = Get-Process -Id $WaitPid -ErrorAction SilentlyContinue
   if (-not $processStillRunning) {
+    Write-UpdateLog "Alter Prozess wurde beendet"
     break
   }
-  Start-Sleep -Milliseconds 500
+  Start-Sleep -Milliseconds 250
+}
+
+$processStillRunning = Get-Process -Id $WaitPid -ErrorAction SilentlyContinue
+if ($processStillRunning) {
+  Write-UpdateLog "Alter Prozess läuft noch, Stop-Process wird ausgeführt"
+  Stop-Process -Id $WaitPid -Force -ErrorAction SilentlyContinue
+  Start-Sleep -Milliseconds 600
 }
 
 $exclude = @('.git', 'node_modules', '__pycache__')
 
+Write-UpdateLog "Dateien werden kopiert"
 Get-ChildItem -LiteralPath $SourceDir -Force | Where-Object { $exclude -notcontains $_.Name } | ForEach-Object {
   $destination = Join-Path $TargetDir $_.Name
   if (Test-Path -LiteralPath $destination) {
@@ -169,6 +186,7 @@ Get-ChildItem -LiteralPath $SourceDir -Force | Where-Object { $exclude -notconta
 }
 
 if (Test-Path -LiteralPath $SettingsPath) {
+  Write-UpdateLog "Settings werden aktualisiert"
   try {
     $settings = Get-Content -LiteralPath $SettingsPath -Raw | ConvertFrom-Json
   } catch {
@@ -187,10 +205,14 @@ if (Test-Path -LiteralPath $SettingsPath) {
 }
 
 if ($IsPackaged -eq 'true') {
+  Write-UpdateLog "Gepackte App wird neu gestartet"
   Start-Process -FilePath $ExecPath -WorkingDirectory $TargetDir
 } else {
+  Write-UpdateLog "Entwicklungs-App wird neu gestartet"
   Start-Process -FilePath $ExecPath -ArgumentList @($AppPath) -WorkingDirectory $TargetDir
 }
+
+Write-UpdateLog "Patchlauf abgeschlossen"
 `;
 
   fs.writeFileSync(scriptPath, script, 'utf8');
