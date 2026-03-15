@@ -181,6 +181,15 @@ function broadcastRouteState() {
   sendToWindow(plannerWindow, 'route-state', routeState);
 }
 
+function stopBackgroundProcesses() {
+  if (playerProcess && !playerProcess.killed) {
+    playerProcess.kill();
+  }
+  if (inventoryProcess && !inventoryProcess.killed) {
+    inventoryProcess.kill();
+  }
+}
+
 function broadcastUpdaterState(state) {
   sendToWindow(mainWindow, 'updater-state', state);
   sendToWindow(plannerWindow, 'updater-state', state);
@@ -586,7 +595,11 @@ app.whenReady().then(() => {
     const started = await updater.applyPendingUpdateAndQuit();
     if (started) {
       app.isQuittingForUpdate = true;
+      stopBackgroundProcesses();
       app.quit();
+      setTimeout(() => {
+        app.exit(0);
+      }, 250);
     }
     return started;
   });
@@ -601,12 +614,7 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
-  if (playerProcess && !playerProcess.killed) {
-    playerProcess.kill();
-  }
-  if (inventoryProcess && !inventoryProcess.killed) {
-    inventoryProcess.kill();
-  }
+  stopBackgroundProcesses();
 
   if (process.platform !== 'darwin') {
     app.quit();
@@ -627,7 +635,11 @@ app.on('before-quit', async (event) => {
   app.isQuittingForUpdate = true;
   const started = await updater.applyPendingUpdateAndQuit();
   if (started) {
+    stopBackgroundProcesses();
     app.quit();
+    setTimeout(() => {
+      app.exit(0);
+    }, 250);
   } else {
     app.isQuittingForUpdate = false;
   }
