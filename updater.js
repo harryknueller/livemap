@@ -305,6 +305,56 @@ $ui.Form.Close()
   fs.writeFileSync(scriptPath, script, 'utf8');
 }
 
+function createBootstrapScript(scriptPath, {
+  powershellPath,
+  applyScriptPath,
+  sourceDir,
+  targetDir,
+  execPath,
+  appPath,
+  settingsPath,
+  commitSha,
+  waitPid,
+  isPackaged,
+}) {
+  const escapeForBatch = (value) => String(value ?? '').replace(/"/g, '""');
+  const lines = [
+    '@echo off',
+    'setlocal',
+    `set "BOOTSTRAP_LOG=${escapeForBatch(path.join(path.dirname(scriptPath), 'bootstrap.log'))}"`,
+    `set "POWERSHELL_STDOUT=${escapeForBatch(path.join(path.dirname(scriptPath), 'powershell-launch.log'))}"`,
+    `set "PS_PATH=${escapeForBatch(powershellPath)}"`,
+    `set "APPLY_SCRIPT=${escapeForBatch(applyScriptPath)}"`,
+    `set "SOURCE_DIR=${escapeForBatch(sourceDir)}"`,
+    `set "TARGET_DIR=${escapeForBatch(targetDir)}"`,
+    `set "EXEC_PATH=${escapeForBatch(execPath)}"`,
+    `set "APP_PATH=${escapeForBatch(appPath)}"`,
+    `set "SETTINGS_PATH=${escapeForBatch(settingsPath)}"`,
+    `set "COMMIT_SHA=${escapeForBatch(commitSha)}"`,
+    `set "WAIT_PID=${escapeForBatch(String(waitPid))}"`,
+    `set "IS_PACKAGED=${escapeForBatch(isPackaged)}"`,
+    'echo [%date% %time%] Bootstrap gestartet > "%BOOTSTRAP_LOG%"',
+    'echo PowerShell: "%PS_PATH%" >> "%BOOTSTRAP_LOG%"',
+    'echo Apply: "%APPLY_SCRIPT%" >> "%BOOTSTRAP_LOG%"',
+    'if not exist "%PS_PATH%" (',
+    '  echo [%date% %time%] FEHLER PowerShell nicht gefunden >> "%BOOTSTRAP_LOG%"',
+    '  exit /b 1',
+    ')',
+    'if not exist "%APPLY_SCRIPT%" (',
+    '  echo [%date% %time%] FEHLER apply-update.ps1 nicht gefunden >> "%BOOTSTRAP_LOG%"',
+    '  exit /b 1',
+    ')',
+    'echo [%date% %time%] Starte PowerShell-Patcher >> "%BOOTSTRAP_LOG%"',
+    '"%PS_PATH%" -NoProfile -ExecutionPolicy Bypass -File "%APPLY_SCRIPT%" "%SOURCE_DIR%" "%TARGET_DIR%" "%EXEC_PATH%" "%APP_PATH%" "%SETTINGS_PATH%" "%COMMIT_SHA%" "%WAIT_PID%" "%IS_PACKAGED%" >> "%POWERSHELL_STDOUT%" 2>&1',
+    'set "PATCH_EXIT=%ERRORLEVEL%"',
+    'echo [%date% %time%] PowerShell beendet mit ExitCode %PATCH_EXIT% >> "%BOOTSTRAP_LOG%"',
+    'exit /b %PATCH_EXIT%',
+    '',
+  ];
+
+  fs.writeFileSync(scriptPath, lines.join('\r\n'), 'utf8');
+}
+
 function createUpdater({
   app,
   getSettings,
@@ -485,6 +535,7 @@ function createUpdater({
     installTriggered = true;
     const pendingRoot = path.dirname(path.dirname(pendingUpdate.sourceRoot));
     const scriptPath = path.join(pendingRoot, 'apply-update.ps1');
+    const bootstrapPath = path.join(pendingRoot, 'launch-patcher.cmd');
     const launcherLogPath = path.join(pendingRoot, 'launcher.log');
     createApplyScript(scriptPath);
 
@@ -497,39 +548,37 @@ function createUpdater({
       'v1.0',
       'powershell.exe',
     );
-    const powershellArgs = [
-      '-NoProfile',
-      '-ExecutionPolicy',
-      'Bypass',
-      '-File',
-      scriptPath,
-      pendingUpdate.sourceRoot,
-      app.getAppPath(),
-      process.execPath,
-      relaunchAppPath,
-      getSettingsPath(),
-      pendingUpdate.commit,
-      String(process.pid),
+    createBootstrapScript(bootstrapPath, {
+      powershellPath,
+      applyScriptPath: scriptPath,
+      sourceDir: pendingUpdate.sourceRoot,
+      targetDir: app.getAppPath(),
+      execPath: process.execPath,
+      appPath: relaunchAppPath,
+      settingsPath: getSettingsPath(),
+      commitSha: pendingUpdate.commit,
+      waitPid: String(process.pid),
       isPackaged,
-    ];
+    });
 
     fs.writeFileSync(
       launcherLogPath,
       [
         `[${new Date().toISOString()}] Launcher vorbereitet`,
         `PowerShell: ${powershellPath}`,
+        `Bootstrap: ${bootstrapPath}`,
         `Script: ${scriptPath}`,
         `Target: ${app.getAppPath()}`,
         `Exec: ${process.execPath}`,
-        `Args: ${JSON.stringify(powershellArgs)}`,
+        `Commit: ${pendingUpdate.commit}`,
         '',
       ].join('\r\n'),
       'utf8',
     );
 
     const launcher = spawn(
-      powershellPath,
-      powershellArgs,
+      process.env.ComSpec || 'cmd.exe',
+      ['/d', '/c', bootstrapPath],
       {
         detached: true,
         stdio: 'ignore',
