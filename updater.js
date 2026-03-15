@@ -305,7 +305,7 @@ try {
     if (-not (Test-Path -LiteralPath $npmPath)) {
       throw 'cmd.exe wurde nicht gefunden.'
     }
-    Start-Process -FilePath $npmPath -ArgumentList @('/d', '/c', 'npm.cmd start') -WorkingDirectory $TargetDir
+    Start-Process -FilePath $npmPath -ArgumentList @('/d', '/c', 'npm.cmd start') -WorkingDirectory $TargetDir -WindowStyle Hidden
   }
 
   Update-Status 'Patch erfolgreich abgeschlossen' 100 'Das Fenster schließt sich gleich automatisch.'
