@@ -155,64 +155,151 @@ function Write-UpdateLog([string]$Message) {
   Add-Content -LiteralPath $logPath -Value "$timestamp $Message"
 }
 
+Write-UpdateLog "PowerShell Patcher wurde gestartet"
+
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+
+function New-StatusForm {
+  $form = New-Object System.Windows.Forms.Form
+  $form.Text = 'Livemap Patcher'
+  $form.StartPosition = 'CenterScreen'
+  $form.Size = New-Object System.Drawing.Size(460, 220)
+  $form.FormBorderStyle = 'FixedDialog'
+  $form.MaximizeBox = $false
+  $form.MinimizeBox = $false
+  $form.TopMost = $true
+  $form.BackColor = [System.Drawing.Color]::FromArgb(18, 24, 30)
+  $form.ForeColor = [System.Drawing.Color]::FromArgb(237, 244, 247)
+
+  $title = New-Object System.Windows.Forms.Label
+  $title.Text = 'Livemap wird aktualisiert'
+  $title.Font = New-Object System.Drawing.Font('Segoe UI', 14, [System.Drawing.FontStyle]::Bold)
+  $title.Location = New-Object System.Drawing.Point(22, 18)
+  $title.Size = New-Object System.Drawing.Size(400, 28)
+
+  $status = New-Object System.Windows.Forms.Label
+  $status.Text = 'Initialisierung'
+  $status.Font = New-Object System.Drawing.Font('Segoe UI', 10)
+  $status.Location = New-Object System.Drawing.Point(22, 64)
+  $status.Size = New-Object System.Drawing.Size(400, 42)
+
+  $progress = New-Object System.Windows.Forms.ProgressBar
+  $progress.Location = New-Object System.Drawing.Point(22, 122)
+  $progress.Size = New-Object System.Drawing.Size(400, 20)
+  $progress.Style = 'Continuous'
+  $progress.Minimum = 0
+  $progress.Maximum = 100
+  $progress.Value = 8
+
+  $details = New-Object System.Windows.Forms.Label
+  $details.Text = 'Bitte das Fenster offen lassen.'
+  $details.Font = New-Object System.Drawing.Font('Segoe UI', 9)
+  $details.ForeColor = [System.Drawing.Color]::FromArgb(157, 178, 188)
+  $details.Location = New-Object System.Drawing.Point(22, 154)
+  $details.Size = New-Object System.Drawing.Size(400, 24)
+
+  $form.Controls.Add($title)
+  $form.Controls.Add($status)
+  $form.Controls.Add($progress)
+  $form.Controls.Add($details)
+
+  return @{
+    Form = $form
+    Status = $status
+    Progress = $progress
+    Details = $details
+  }
+}
+
+$ui = New-StatusForm
+$ui.Form.Show()
+[System.Windows.Forms.Application]::DoEvents()
+
+function Update-Status([string]$Message, [int]$ProgressValue, [string]$Detail = $null) {
+  Write-UpdateLog $Message
+  $ui.Status.Text = $Message
+  if ($ProgressValue -ge 0 -and $ProgressValue -le 100) {
+    $ui.Progress.Value = $ProgressValue
+  }
+  if ($Detail) {
+    $ui.Details.Text = $Detail
+  }
+  [System.Windows.Forms.Application]::DoEvents()
+}
+
 Write-UpdateLog "Patchlauf gestartet"
+Update-Status 'Patchlauf gestartet' 10 'Warte auf das Beenden der Livemap.'
 Start-Sleep -Milliseconds 500
 
 for ($i = 0; $i -lt 20; $i++) {
   $processStillRunning = Get-Process -Id $WaitPid -ErrorAction SilentlyContinue
   if (-not $processStillRunning) {
-    Write-UpdateLog "Alter Prozess wurde beendet"
+    Update-Status 'Livemap wurde beendet' 24 'Dateien werden gleich ersetzt.'
     break
   }
   Start-Sleep -Milliseconds 250
+  [System.Windows.Forms.Application]::DoEvents()
 }
 
 $processStillRunning = Get-Process -Id $WaitPid -ErrorAction SilentlyContinue
 if ($processStillRunning) {
-  Write-UpdateLog "Alter Prozess läuft noch, Stop-Process wird ausgeführt"
+  Update-Status 'Livemap wird zwangsweise beendet' 30 'Der alte Prozess reagiert nicht schnell genug.'
   Stop-Process -Id $WaitPid -Force -ErrorAction SilentlyContinue
   Start-Sleep -Milliseconds 600
 }
 
 $exclude = @('.git', 'node_modules', '__pycache__')
 
-Write-UpdateLog "Dateien werden kopiert"
-Get-ChildItem -LiteralPath $SourceDir -Force | Where-Object { $exclude -notcontains $_.Name } | ForEach-Object {
-  $destination = Join-Path $TargetDir $_.Name
-  if (Test-Path -LiteralPath $destination) {
-    Remove-Item -LiteralPath $destination -Recurse -Force
-  }
-  Copy-Item -LiteralPath $_.FullName -Destination $destination -Recurse -Force
-}
-
-if (Test-Path -LiteralPath $SettingsPath) {
-  Write-UpdateLog "Settings werden aktualisiert"
-  try {
-    $settings = Get-Content -LiteralPath $SettingsPath -Raw | ConvertFrom-Json
-  } catch {
-    $settings = [pscustomobject]@{}
+try {
+  Update-Status 'Dateien werden ersetzt' 52 'Neue Dateien werden in die Livemap kopiert.'
+  Get-ChildItem -LiteralPath $SourceDir -Force | Where-Object { $exclude -notcontains $_.Name } | ForEach-Object {
+    $destination = Join-Path $TargetDir $_.Name
+    if (Test-Path -LiteralPath $destination) {
+      Remove-Item -LiteralPath $destination -Recurse -Force
+    }
+    Copy-Item -LiteralPath $_.FullName -Destination $destination -Recurse -Force
+    [System.Windows.Forms.Application]::DoEvents()
   }
 
-  if (-not $settings.updater) {
-    $settings | Add-Member -MemberType NoteProperty -Name updater -Value ([pscustomobject]@{})
+  if (Test-Path -LiteralPath $SettingsPath) {
+    Update-Status 'Einstellungen werden aktualisiert' 74 'Commit-Stand und Pending-Update werden bereinigt.'
+    try {
+      $settings = Get-Content -LiteralPath $SettingsPath -Raw | ConvertFrom-Json
+    } catch {
+      $settings = [pscustomobject]@{}
+    }
+
+    if (-not $settings.updater) {
+      $settings | Add-Member -MemberType NoteProperty -Name updater -Value ([pscustomobject]@{})
+    }
+
+    $settings.updater.currentCommit = $CommitSha
+    $settings.updater.pendingUpdate = $null
+    $settings.updater.lastCheckedAt = (Get-Date).ToString('o')
+
+    $settings | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $SettingsPath -Encoding UTF8
   }
 
-  $settings.updater.currentCommit = $CommitSha
-  $settings.updater.pendingUpdate = $null
-  $settings.updater.lastCheckedAt = (Get-Date).ToString('o')
+  if ($IsPackaged -eq 'true') {
+    Update-Status 'Livemap wird neu gestartet' 90 'Die gepackte App wird gestartet.'
+    Start-Process -FilePath $ExecPath -WorkingDirectory $TargetDir
+  } else {
+    Update-Status 'Livemap wird neu gestartet' 90 'Die Entwicklungs-App wird gestartet.'
+    Start-Process -FilePath $ExecPath -ArgumentList @($AppPath) -WorkingDirectory $TargetDir
+  }
 
-  $settings | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $SettingsPath -Encoding UTF8
+  Update-Status 'Patch erfolgreich abgeschlossen' 100 'Das Fenster schließt sich gleich automatisch.'
+  Start-Sleep -Milliseconds 1800
+} catch {
+  $errorMessage = $_.Exception.Message
+  Update-Status 'Patch fehlgeschlagen' 100 $errorMessage
+  $messageBody = 'Patch fehlgeschlagen.' + [Environment]::NewLine + $errorMessage + [Environment]::NewLine + [Environment]::NewLine + 'Log: ' + $logPath
+  [System.Windows.Forms.MessageBox]::Show($messageBody, 'Livemap Patcher', 'OK', 'Error') | Out-Null
+  Start-Sleep -Milliseconds 2500
 }
 
-if ($IsPackaged -eq 'true') {
-  Write-UpdateLog "Gepackte App wird neu gestartet"
-  Start-Process -FilePath $ExecPath -WorkingDirectory $TargetDir
-} else {
-  Write-UpdateLog "Entwicklungs-App wird neu gestartet"
-  Start-Process -FilePath $ExecPath -ArgumentList @($AppPath) -WorkingDirectory $TargetDir
-}
-
-Write-UpdateLog "Patchlauf abgeschlossen"
+$ui.Form.Close()
 `;
 
   fs.writeFileSync(scriptPath, script, 'utf8');
@@ -423,7 +510,7 @@ function createUpdater({
       {
         detached: true,
         stdio: 'ignore',
-        windowsHide: true,
+        windowsHide: false,
       },
     ).unref();
 
