@@ -135,6 +135,12 @@ h1 {
   font-size: 16px;
 }
 
+.window-button-tutorial {
+  font-size: 18px;
+  font-weight: 800;
+  line-height: 1;
+}
+
 .window-button-mapmode img {
   width: 22px;
   height: 22px;
@@ -558,6 +564,23 @@ h1 {
 }
 
 .route-planner-button[data-active="true"] {
+  border-color: rgba(121, 242, 168, 0.88);
+  background: linear-gradient(rgba(121, 242, 168, 0.08), rgba(121, 242, 168, 0.08)), rgba(11, 18, 23, 0.92);
+  box-shadow: 0 0 0 1px rgba(121, 242, 168, 0.22), 0 12px 24px rgba(0, 0, 0, 0.28), 0 0 18px rgba(121, 242, 168, 0.2);
+}
+
+.player-lock-button {
+  bottom: 200px;
+}
+
+.player-lock-button-icon {
+  font-size: 24px;
+  line-height: 1;
+  pointer-events: none;
+  filter: drop-shadow(0 0 8px rgba(255, 255, 255, 0.2));
+}
+
+.player-lock-button[data-active="true"] {
   border-color: rgba(121, 242, 168, 0.88);
   background: linear-gradient(rgba(121, 242, 168, 0.08), rgba(121, 242, 168, 0.08)), rgba(11, 18, 23, 0.92);
   box-shadow: 0 0 0 1px rgba(121, 242, 168, 0.22), 0 12px 24px rgba(0, 0, 0, 0.28), 0 0 18px rgba(121, 242, 168, 0.2);
@@ -1850,6 +1873,220 @@ body.planner-window {
   display: flex;
   justify-content: flex-end;
   gap: 10px;
+}
+
+.tutorial-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2100;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 24px;
+}
+
+.tutorial-overlay[hidden] {
+  display: none;
+}
+
+.tutorial-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(4, 8, 10, 0.72);
+  backdrop-filter: blur(6px);
+}
+
+.tutorial-panel {
+  position: relative;
+  z-index: 1;
+  width: min(540px, calc(100vw - 32px));
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 18px 20px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(8, 14, 18, 0.96);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.42);
+  backdrop-filter: blur(14px);
+  animation: tutorialIn 180ms ease;
+  pointer-events: auto;
+}
+
+.tutorial-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.tutorial-header h2 {
+  margin: 4px 0 0;
+  font-size: 24px;
+  letter-spacing: 0.01em;
+}
+
+.tutorial-step {
+  min-width: 82px;
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #d8e6ed;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.tutorial-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tutorial-target {
+  margin: 0;
+  color: #ff8f8f;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.tutorial-text {
+  margin: 0;
+  color: #e7f1f6;
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+.tutorial-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.tutorial-highlight {
+  position: relative !important;
+  z-index: 2120 !important;
+  isolation: isolate;
+}
+
+.tutorial-highlight::after {
+  content: "";
+  position: absolute;
+  inset: -7px;
+  border-radius: 18px;
+  border: 2px solid rgba(255, 92, 92, 0.98);
+  box-shadow: 0 0 0 2px rgba(255, 92, 92, 0.18), 0 0 22px rgba(255, 92, 92, 0.36);
+  pointer-events: none;
+  animation: tutorialPulse 1.2s ease-in-out infinite;
+}
+
+.tutorial-highlight.legend-category-button::after,
+.tutorial-highlight.marker-only-filter-button::after,
+.tutorial-highlight.player-center-button::after,
+.tutorial-highlight.window-button::after,
+.tutorial-highlight.map-frame-button::after,
+.tutorial-highlight.opacity-button::after {
+  border-radius: 16px;
+}
+
+.tutorial-highlight.legend::after,
+.tutorial-highlight.marker-only-filters::after,
+.tutorial-highlight.map-viewport::after {
+  inset: -10px;
+  border-radius: 22px;
+}
+
+@keyframes tutorialIn {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes tutorialPulse {
+  0%,
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 2px rgba(255, 92, 92, 0.18), 0 0 18px rgba(255, 92, 92, 0.3);
+  }
+  50% {
+    transform: scale(1.01);
+    box-shadow: 0 0 0 2px rgba(255, 92, 92, 0.24), 0 0 26px rgba(255, 92, 92, 0.46);
+  }
+}
+
+.tutorial-window-body {
+  margin: 0;
+  overflow: hidden;
+  background: transparent;
+}
+
+.tutorial-window {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+}
+
+.tutorial-dim {
+  position: fixed;
+  background: rgba(4, 8, 10, 0.7);
+  backdrop-filter: blur(8px);
+  pointer-events: none;
+}
+
+.tutorial-spotlight {
+  position: fixed;
+  border-radius: 20px;
+  border: 2px solid rgba(255, 92, 92, 0.98);
+  box-shadow: 0 0 0 2px rgba(255, 92, 92, 0.16), 0 0 28px rgba(255, 92, 92, 0.42);
+  pointer-events: none;
+  animation: tutorialPulse 1.2s ease-in-out infinite;
+}
+
+.tutorial-window-panel {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  width: min(560px, calc(100vw - 32px));
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 18px 20px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(8, 14, 18, 0.96);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.42);
+  backdrop-filter: blur(14px);
+}
+
+.tutorial-window-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.tutorial-window-header h2 {
+  margin: 4px 0 0;
+  font-size: 24px;
+  letter-spacing: 0.01em;
+}
+
+.tutorial-window-body-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .update-toast {

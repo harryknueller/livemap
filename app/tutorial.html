@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Livemap Tutorial</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="tutorial-window-body">
+  <div class="tutorial-window">
+    <div class="tutorial-dim tutorial-dim-top" id="tutorialDimTop"></div>
+    <div class="tutorial-dim tutorial-dim-left" id="tutorialDimLeft"></div>
+    <div class="tutorial-dim tutorial-dim-right" id="tutorialDimRight"></div>
+    <div class="tutorial-dim tutorial-dim-bottom" id="tutorialDimBottom"></div>
+    <div class="tutorial-spotlight" id="tutorialSpotlight" hidden></div>
+
+    <section class="tutorial-window-panel" aria-labelledby="tutorialWindowTitle">
+      <header class="tutorial-window-header">
+        <div>
+          <p class="planner-eyebrow">Tutorial</p>
+          <h2 id="tutorialWindowTitle">Livemap Einführung</h2>
+        </div>
+        <span class="tutorial-step" id="tutorialWindowStep">Schritt 1</span>
+      </header>
+      <div class="tutorial-window-body-copy">
+        <p class="tutorial-target" id="tutorialWindowTarget">Bereich</p>
+        <p class="tutorial-text" id="tutorialWindowText">-</p>
+      </div>
+      <div class="tutorial-actions">
+        <button class="planner-secondary" id="tutorialWindowSkipButton" type="button">Überspringen</button>
+        <button class="planner-primary" id="tutorialWindowNextButton" type="button">Weiter</button>
+      </div>
+    </section>
+  </div>
+  <script src="tutorial.js"></script>
+</body>
+</html>

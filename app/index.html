@@ -54,6 +54,7 @@
               <input id="opacitySlider" type="range" min="20" max="100" step="1" value="100" aria-label="Fenstersichtbarkeit">
             </div>
           </div>
+          <button class="window-button window-button-tutorial" id="tutorialButton" type="button" aria-label="Tutorial anzeigen">?</button>
           <button class="window-button window-button-minimize" id="minimizeButton" type="button" aria-label="Minimieren">&#x2796;</button>
           <button class="window-button window-button-close" id="closeButton" type="button" aria-label="Schliessen">&#x274C;</button>
         </div>
@@ -85,13 +86,16 @@
         </div>
         <div class="coord-panel" id="coordPanel">
           <div class="coord-row"><span>X</span><strong id="coordX">-</strong></div>
-          <div class="coord-row"><span>Z</span><strong id="coordZ">-</strong></div>
           <div class="coord-row"><span>Y</span><strong id="coordY">-</strong></div>
+          <div class="coord-row"><span>Z</span><strong id="coordZ">-</strong></div>
         </div>
         <div class="inventory-panel" id="inventoryPanel">
           <div class="inventory-head"><span class="inventory-icon">⚖️</span><strong id="inventoryUsageTop">0%</strong></div>
           <div class="inventory-sub" id="inventoryUsage">Gewicht</div>
         </div>
+        <button class="player-center-button player-lock-button" id="playerLockButton" type="button" aria-label="Aktuelle Spieler-Signatur sperren">
+          <span class="player-lock-button-icon">&#x1F3AF;</span>
+        </button>
         <button class="player-center-button route-planner-button" id="routePlannerButton" type="button" aria-label="Routenplaner">
           <img src="map/routenplaner.png" alt="">
         </button>
@@ -130,6 +134,26 @@
       <div class="dialog-actions">
         <button class="planner-secondary" id="confirmDialogCancel" type="button">Abbrechen</button>
         <button class="planner-primary" id="confirmDialogConfirm" type="button">Bestätigen</button>
+      </div>
+    </section>
+  </div>
+  <div class="tutorial-overlay" id="tutorialOverlay" hidden>
+    <div class="tutorial-backdrop"></div>
+    <section class="tutorial-panel" aria-labelledby="tutorialTitle">
+      <header class="tutorial-header">
+        <div>
+          <p class="planner-eyebrow">Tutorial</p>
+          <h2 id="tutorialTitle">Livemap Einführung</h2>
+        </div>
+        <span class="tutorial-step" id="tutorialStepLabel">Schritt 1</span>
+      </header>
+      <div class="tutorial-body">
+        <p class="tutorial-target" id="tutorialTargetLabel">Bereich</p>
+        <p class="tutorial-text" id="tutorialText">-</p>
+      </div>
+      <div class="tutorial-actions">
+        <button class="planner-secondary" id="tutorialSkipButton" type="button">Überspringen</button>
+        <button class="planner-primary" id="tutorialNextButton" type="button">Weiter</button>
       </div>
     </section>
   </div>

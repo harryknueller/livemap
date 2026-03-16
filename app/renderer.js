@@ -53,12 +53,14 @@ const markerOnlyFiltersElement = document.getElementById('markerOnlyFilters');
 const markerOnlyCanvas = document.getElementById('markerOnlyCanvas');
 const resizeHandles = document.getElementById('resizeHandles');
 const mapFrameButton = document.getElementById('mapFrameButton');
+const playerLockButton = document.getElementById('playerLockButton');
 const routePlannerButton = document.getElementById('routePlannerButton');
 const findNearestButton = document.getElementById('findNearestButton');
 const playerCenterButton = document.getElementById('playerCenterButton');
 const opacityButton = document.getElementById('opacityButton');
 const opacityPopover = document.getElementById('opacityPopover');
 const opacitySlider = document.getElementById('opacitySlider');
+const tutorialButton = document.getElementById('tutorialButton');
 const minimizeButton = document.getElementById('minimizeButton');
 const closeButton = document.getElementById('closeButton');
 const mapModeButton = document.getElementById('mapModeButton');
@@ -91,6 +93,13 @@ const startupUpdaterBarFill = document.getElementById('startupUpdaterBarFill');
 const startupUpdaterActions = document.getElementById('startupUpdaterActions');
 const startupUpdaterPatchButton = document.getElementById('startupUpdaterPatchButton');
 const startupUpdaterExitButton = document.getElementById('startupUpdaterExitButton');
+const tutorialOverlay = document.getElementById('tutorialOverlay');
+const tutorialTitle = document.getElementById('tutorialTitle');
+const tutorialStepLabel = document.getElementById('tutorialStepLabel');
+const tutorialTargetLabel = document.getElementById('tutorialTargetLabel');
+const tutorialText = document.getElementById('tutorialText');
+const tutorialNextButton = document.getElementById('tutorialNextButton');
+const tutorialSkipButton = document.getElementById('tutorialSkipButton');
 
 const TILE_COLUMNS = 5;
 const TILE_ROWS = 4;
@@ -148,6 +157,7 @@ let markerCooldownTimer = null;
 let currentChannelPort = null;
 let nearestMarkerLine = null;
 let nearestMarkerEnabled = false;
+let playerPositionLockState = { active: false, signature: null };
 let routePlannerConfig = null;
 let routePlannerResults = [];
 let routePreview = null;
@@ -162,6 +172,11 @@ let confirmDialogResolver = null;
 let updaterState = null;
 let startupUpdaterResolved = false;
 let startupUpdaterStartedAt = 0;
+let tutorialActive = false;
+let tutorialStepIndex = 0;
+let tutorialHighlightedElement = null;
+let tutorialRunningTransition = false;
+let tutorialRequiredAction = null;
 const CHANNEL_BY_PORT = {
   6061: { label: '🛡️ CH 1', state: 'normal' },
   6062: { label: '🛡️ CH 2', state: 'normal' },
@@ -194,6 +209,173 @@ const ROUTE_PLANNER_WINDOW_BOUNDS = {
   normal: { width: 1180, height: 820 },
   markerOnly: { width: 1220, height: 860 },
 };
+const TUTORIAL_VERSION = 1;
+
+const TUTORIAL_STEPS = [
+  {
+    title: 'Livemap Überblick',
+    targetLabel: 'Karte',
+    text: 'Das ist die normale Livemap. Hier siehst du die Weltkarte, deinen Spieler, Marker, Koordinaten und das Inventargewicht in einer Ansicht.',
+    selector: '.map-viewport',
+  },
+  {
+    title: 'Hauptfilter',
+    targetLabel: 'Filterleiste',
+    text: 'Unter der Karte findest du die Hauptkategorien. Standardmäßig siehst du nur die Oberkategorien wie Erze, Pflanzen und Standart.',
+    selector: '.legend',
+  },
+  {
+    title: 'Unterfilter',
+    targetLabel: 'Kategorie-Filter',
+    text: 'Wenn du über eine Hauptkategorie hoverst, öffnet sich das Untermenü. Dort kannst du einzelne Unterkategorien per Klick an- und ausschalten.',
+    selector: '.legend-category-button[data-category="erze"]',
+    beforeShow: async () => {
+      if (isMarkerOnlyMode) {
+        await toggleMapMode();
+      }
+      openLegendCategory = 'erze';
+      renderLegend();
+    },
+    afterHide: () => {
+      openLegendCategory = null;
+      renderLegend();
+    },
+  },
+  {
+    title: 'Spieler-Lock',
+    targetLabel: 'Lock-Button',
+    text: 'Wenn die Spielerposition nicht erkannt wird oder zwischen anderen Spielern hin und her springt, entferne dich zuerst von anderen Spielern und stelle dich allein irgendwo hin. Prüfe dann, ob die Koordinaten korrekt laufen. Erst danach aktivierst du diesen Button. So speicherst du genau deine eigene Signatur für zukünftige Erkennung.',
+    selector: '#playerLockButton',
+  },
+  {
+    title: 'Routenplaner',
+    targetLabel: 'Routenplaner',
+    text: 'Der Routenplaner berechnet mehrere effiziente Routen, zeigt Details an und kann eine aktive Route später wieder aufnehmen.',
+    selector: '#routePlannerButton',
+  },
+  {
+    title: 'Nächster Marker',
+    targetLabel: 'Find Nearest',
+    text: 'Dieser Button zeigt dir die Linie zum nächstgelegenen aktiven Marker und blendet über deinem Spieler die Entfernung ein.',
+    selector: '#findNearestButton',
+  },
+  {
+    title: 'Spieler zentrieren',
+    targetLabel: 'Center-Button',
+    text: 'Mit diesem Button zentrierst du die Karte wieder direkt auf deinen Spieler, falls du dich auf der Karte verschoben hast.',
+    selector: '#playerCenterButton',
+  },
+  {
+    title: 'Fenster-Sichtbarkeit',
+    targetLabel: 'Opacity',
+    text: 'Hier stellst du die Transparenz des Overlays ein. Das ist praktisch, wenn du die Livemap über der Minimap oder direkt über dem Spiel nutzen möchtest.',
+    selector: '#opacityButton',
+  },
+  {
+    title: 'Moduswechsel',
+    targetLabel: 'Switch-Button',
+    text: 'Mit diesem Button wechselst du in den Mapmarker-Only-Modus. Dort bleibt nur die Markeransicht übrig. Mit Weiter wechseln wir jetzt in diesen Modus.',
+    selector: '#mapModeButton',
+    nextLabel: 'In Marker-Only wechseln',
+  },
+  {
+    title: 'Marker-Only Übersicht',
+    targetLabel: 'Marker-Only',
+    text: 'Jetzt bist du im Marker-Only-Modus. Links liegen die kompakten Filter- und Funktionsbuttons, rechts der eigentliche Markerbereich.',
+    selector: '.board',
+    requiresMarkerOnly: true,
+    beforeShow: async () => {
+      if (!isMarkerOnlyMode) {
+        await toggleMapMode();
+        await wait(420);
+      }
+    },
+  },
+  {
+    title: 'Marker-Only Filter',
+    targetLabel: 'Filter-Icons',
+    text: 'Die Hauptfilter funktionieren hier genauso wie in der normalen Livemap. Hover auf ein Icon öffnet das Untermenü, Klick auf die Hauptkategorie schaltet die aktiven Unterfilter der Kategorie.',
+    selector: '.marker-only-filter-button[data-category="erze"]',
+    requiresMarkerOnly: true,
+    beforeShow: async () => {
+      if (!isMarkerOnlyMode) {
+        await toggleMapMode();
+        await wait(420);
+      }
+      openLegendCategory = 'erze';
+      renderLegend();
+    },
+    afterHide: () => {
+      openLegendCategory = null;
+      renderLegend();
+    },
+  },
+  {
+    title: 'Marker-Only Zusatzbuttons',
+    targetLabel: 'Funktionsbuttons',
+    text: 'Unter den Kategorie-Icons findest du auch hier den Button für Nächster Marker und den Routenplaner. Die Logik ist dieselbe wie in der normalen Ansicht.',
+    selector: '.marker-only-nearest-button',
+    requiresMarkerOnly: true,
+    beforeShow: async () => {
+      if (!isMarkerOnlyMode) {
+        await toggleMapMode();
+        await wait(420);
+      }
+    },
+  },
+  {
+    title: 'Border einblenden',
+    targetLabel: 'Border-Button',
+    text: 'Für die Einrichtung des Marker-Only-Modus musst du jetzt diesen Border-Button anklicken. Erst dadurch erscheint der grüne Rahmen, den du danach über deine Minimap legen kannst.',
+    selector: '#mapFrameButton',
+    requiredAction: 'border-enable',
+    advanceOnAction: false,
+    requiresMarkerOnly: true,
+    beforeShow: async () => {
+      if (!isMarkerOnlyMode) {
+        await toggleMapMode();
+        await wait(420);
+      }
+      if (isMarkerFrameVisible) {
+        toggleMarkerFrame();
+      }
+    },
+  },
+  {
+    title: 'Rahmen ausrichten',
+    targetLabel: 'Grüner Rahmen',
+    text: 'Ziehe und skaliere den grünen Rahmen jetzt so, dass er genau über deiner Minimap liegt. So richtest du den Marker-Only-Modus sauber ein.',
+    selector: '.map-viewport',
+    requiresMarkerOnly: true,
+    beforeShow: async () => {
+      if (!isMarkerOnlyMode) {
+        await toggleMapMode();
+        await wait(420);
+      }
+      if (!isMarkerFrameVisible) {
+        toggleMarkerFrame();
+      }
+    },
+  },
+  {
+    title: 'Einrichtung beenden',
+    targetLabel: 'Border-Button',
+    text: 'Wenn der Rahmen korrekt sitzt, musst du den Border-Button jetzt erneut anklicken. Damit beendest du die Einrichtung und der grüne Rahmen verschwindet wieder.',
+    selector: '#mapFrameButton',
+    requiredAction: 'border-disable',
+    requiresMarkerOnly: true,
+    beforeShow: async () => {
+      if (!isMarkerOnlyMode) {
+        await toggleMapMode();
+        await wait(420);
+      }
+      if (!isMarkerFrameVisible) {
+        toggleMarkerFrame();
+      }
+    },
+    nextLabel: 'Fertig',
+  },
+];
 
 function getMarkerEntries() {
   return Object.values(oreData);
@@ -664,6 +846,236 @@ function updateNearestMarkerButtonState() {
   if (compactButton) {
     compactButton.dataset.active = nearestMarkerEnabled ? 'true' : 'false';
   }
+}
+
+function updatePlayerLockButtonState() {
+  if (!playerLockButton) {
+    return;
+  }
+
+  playerLockButton.dataset.active = playerPositionLockState?.active ? 'true' : 'false';
+}
+
+async function saveCurrentPlayerLock() {
+  if (playerPositionLockState?.active) {
+    playerPositionLockState = await window.livemapApi.setPlayerPositionLock({ active: false });
+    updatePlayerLockButtonState();
+    return;
+  }
+
+  if (!playerPosition?.signature) {
+    console.warn('Keine Spieler-Signatur verfügbar, Lock kann nicht gesetzt werden.');
+    return;
+  }
+
+  playerPositionLockState = await window.livemapApi.setPlayerPositionLock({
+    active: true,
+    signature: playerPosition.signature,
+    position: {
+      x: playerPosition.x,
+      y: playerPosition.y,
+      z: playerPosition.z,
+    },
+  });
+  updatePlayerLockButtonState();
+}
+
+function getTutorialTarget(step) {
+  if (!step?.selector) {
+    return null;
+  }
+
+  return document.querySelector(step.selector);
+}
+
+async function buildTutorialStepPayload(step) {
+  const target = getTutorialTarget(step);
+  let targetRect = null;
+  const workArea = await window.livemapApi.getDisplayWorkArea();
+
+  if (target) {
+    const rect = target.getBoundingClientRect();
+    const windowBounds = await window.livemapApi.getWindowBounds();
+    targetRect = {
+      left: Math.round((windowBounds.x - workArea.x) + rect.left),
+      top: Math.round((windowBounds.y - workArea.y) + rect.top),
+      width: Math.round(rect.width),
+      height: Math.round(rect.height),
+    };
+  }
+
+  return {
+    title: step.title,
+    stepLabel: `Schritt ${tutorialStepIndex + 1}/${TUTORIAL_STEPS.length}`,
+    targetLabel: step.targetLabel,
+    text: step.text,
+    nextLabel: step.nextLabel || (tutorialStepIndex === TUTORIAL_STEPS.length - 1 ? 'Fertig' : 'Weiter'),
+    targetRect,
+    nextDisabled: Boolean(step.requiredAction),
+    action: step.requiredAction || 'next',
+    workArea,
+  };
+}
+
+async function waitForMarkerOnlyTutorialLayout(timeoutMs = 2500) {
+  const startedAt = Date.now();
+
+  while ((Date.now() - startedAt) < timeoutMs) {
+    const markerOnlyReady = document.body.classList.contains('marker-only-mode')
+      && markerOnlyCanvas
+      && markerOnlyCanvas.getBoundingClientRect().width >= 40
+      && markerOnlyCanvas.getBoundingClientRect().height >= 40;
+
+    if (markerOnlyReady) {
+      await wait(120);
+      return;
+    }
+
+    await wait(60);
+  }
+}
+
+async function waitForTutorialTarget(step, timeoutMs = 2000) {
+  const startedAt = Date.now();
+
+  while ((Date.now() - startedAt) < timeoutMs) {
+    const target = getTutorialTarget(step);
+    if (target) {
+      const rect = target.getBoundingClientRect();
+      const style = window.getComputedStyle(target);
+      const isVisible = rect.width >= 8
+        && rect.height >= 8
+        && style.display !== 'none'
+        && style.visibility !== 'hidden'
+        && style.opacity !== '0';
+
+      if (isVisible) {
+        await wait(80);
+        return target;
+      }
+    }
+
+    await wait(50);
+  }
+
+  return getTutorialTarget(step);
+}
+
+async function showTutorialStep(index) {
+  if (tutorialRunningTransition) {
+    return;
+  }
+
+  tutorialRunningTransition = true;
+
+  const previousStep = TUTORIAL_STEPS[tutorialStepIndex];
+  if (previousStep?.afterHide) {
+    previousStep.afterHide();
+  }
+
+  tutorialStepIndex = index;
+  const step = TUTORIAL_STEPS[tutorialStepIndex];
+  tutorialRequiredAction = step?.requiredAction || null;
+
+  if (step?.beforeShow) {
+    await step.beforeShow();
+  }
+
+  if (step?.requiresMarkerOnly) {
+    await waitForMarkerOnlyTutorialLayout();
+  }
+
+  await waitForTutorialTarget(step);
+  const payload = await buildTutorialStepPayload(step);
+  await window.livemapApi.updateTutorialStep(payload);
+
+  tutorialRunningTransition = false;
+}
+
+async function finishTutorial() {
+  tutorialRequiredAction = null;
+  const currentStep = TUTORIAL_STEPS[tutorialStepIndex];
+  if (currentStep?.afterHide) {
+    currentStep.afterHide();
+  }
+
+  if (isMarkerOnlyMode && isMarkerFrameVisible) {
+    toggleMarkerFrame();
+  }
+  if (isMarkerOnlyMode) {
+    await toggleMapMode();
+  }
+
+  tutorialActive = false;
+  await window.livemapApi.closeTutorial();
+  saveUiSettings({
+    tutorialCompleted: true,
+    tutorialVersion: TUTORIAL_VERSION,
+  });
+}
+
+async function startTutorial(force = false) {
+  const alreadyShown = uiSettings?.tutorialShownVersion === TUTORIAL_VERSION;
+  if (!force && alreadyShown) {
+    return;
+  }
+
+  if (!force) {
+    saveUiSettings({
+      tutorialShownVersion: TUTORIAL_VERSION,
+    });
+  }
+
+  tutorialActive = true;
+  tutorialStepIndex = -1;
+  await window.livemapApi.openTutorial();
+  await showTutorialStep(0);
+}
+
+async function advanceTutorial() {
+  if (!tutorialActive || tutorialRunningTransition || tutorialRequiredAction) {
+    return;
+  }
+
+  if (tutorialStepIndex >= TUTORIAL_STEPS.length - 1) {
+    await finishTutorial();
+    return;
+  }
+
+  await showTutorialStep(tutorialStepIndex + 1);
+}
+
+async function skipTutorial() {
+  if (!tutorialActive || tutorialRunningTransition) {
+    return;
+  }
+
+  await finishTutorial();
+}
+
+async function handleTutorialRequiredAction(action) {
+  if (!tutorialActive || tutorialRunningTransition) {
+    return;
+  }
+
+  if (!tutorialRequiredAction || tutorialRequiredAction !== action) {
+    return;
+  }
+
+  const currentStep = TUTORIAL_STEPS[tutorialStepIndex];
+  tutorialRequiredAction = null;
+
+  if (currentStep?.advanceOnAction === false) {
+    const payload = await buildTutorialStepPayload({
+      ...currentStep,
+      requiredAction: null,
+    });
+    await window.livemapApi.updateTutorialStep(payload);
+    return;
+  }
+
+  await wait(120);
+  await advanceTutorial();
 }
 
 function updateRoutePlannerButtonState() {
@@ -2894,8 +3306,8 @@ function updatePlayerMarker(data) {
   setChannelStatus(nextPosition.port);
   setLiveStatus('Live', 'live');
   coordXElement.textContent = Math.round(nextPosition.x).toString();
-  coordZElement.textContent = Math.round(nextPosition.y).toString();
-  coordYElement.textContent = Math.round(nextPosition.z).toString();
+  coordYElement.textContent = Math.round(nextPosition.y).toString();
+  coordZElement.textContent = Math.round(nextPosition.z).toString();
   updateRouteProgress();
   updateRoutePreviewAndGuidance();
   refreshNearestMarkerLine();
@@ -3153,6 +3565,8 @@ async function bootstrap() {
     });
 
     renderUpdaterState(await window.livemapApi.getUpdaterState());
+    playerPositionLockState = await window.livemapApi.getPlayerPositionLock();
+    updatePlayerLockButtonState();
     window.livemapApi.onUpdaterState((state) => {
       renderUpdaterState(state);
     });
@@ -3172,6 +3586,12 @@ async function bootstrap() {
     if (routePlannerButton) {
       routePlannerButton.addEventListener('click', () => {
         window.livemapApi.openRoutePlanner();
+      });
+    }
+
+    if (playerLockButton) {
+      playerLockButton.addEventListener('click', () => {
+        void saveCurrentPlayerLock();
       });
     }
 
@@ -3220,6 +3640,33 @@ async function bootstrap() {
       });
     }
 
+    window.livemapApi.onTutorialAction((action) => {
+      if (action === 'border-enable') {
+        if (!isMarkerFrameVisible) {
+          toggleMarkerFrame();
+        }
+        void handleTutorialRequiredAction('border-enable');
+        return;
+      }
+
+      if (action === 'border-disable') {
+        if (isMarkerFrameVisible) {
+          toggleMarkerFrame();
+        }
+        void handleTutorialRequiredAction('border-disable');
+        return;
+      }
+
+      if (action === 'next') {
+        void advanceTutorial();
+        return;
+      }
+
+      if (action === 'skip') {
+        void skipTutorial();
+      }
+    });
+
     if (routeMarkerList) {
       routeMarkerList.addEventListener('change', () => {
         syncRoutePlannerConfigFromInputs();
@@ -3265,6 +3712,7 @@ async function bootstrap() {
     if (mapFrameButton) {
       mapFrameButton.addEventListener('click', () => {
         toggleMarkerFrame();
+        void handleTutorialRequiredAction(isMarkerFrameVisible ? 'border-enable' : 'border-disable');
       });
     }
 
@@ -3299,6 +3747,12 @@ async function bootstrap() {
         const appliedValue = await window.livemapApi.setWindowOpacity(value);
         updateOpacityLabel(appliedValue);
         saveCurrentViewSettings({ windowOpacity: appliedValue });
+      });
+    }
+
+    if (tutorialButton) {
+      tutorialButton.addEventListener('click', () => {
+        void startTutorial(true);
       });
     }
 
@@ -3371,6 +3825,9 @@ async function bootstrap() {
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
           document.body.classList.add('app-ready');
+          window.setTimeout(() => {
+            void startTutorial();
+          }, 240);
         });
       });
     } catch (error) {

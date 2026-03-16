@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
@@ -8,6 +8,8 @@ let playerProcess;
 let inventoryProcess;
 let mainWindow = null;
 let plannerWindow = null;
+let tutorialWindow = null;
+let tutorialStepPayload = null;
 let settings;
 let updater;
 let lastPlayerPosition = null;
@@ -40,6 +42,60 @@ const DEFAULT_SETTINGS = {
     },
   },
 };
+
+function getPlayerLockPath() {
+  return path.join(app.getPath('userData'), 'playerposition-lock.json');
+}
+
+function readPlayerLock() {
+  try {
+    const raw = fs.readFileSync(getPlayerLockPath(), 'utf8').replace(/^\uFEFF/, '');
+    const payload = JSON.parse(raw);
+    const position = payload?.position || {};
+    const x = Number(position.x);
+    const y = Number(position.y);
+    const z = Number(position.z);
+    const signature = typeof payload?.signature === 'string' ? payload.signature : '';
+
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z) || !signature) {
+      return { active: false };
+    }
+
+    return {
+      active: true,
+      signature,
+      position: { x, y, z },
+      updatedAt: payload?.updatedAt || null,
+    };
+  } catch (_error) {
+    return { active: false };
+  }
+}
+
+function writePlayerLock(payload) {
+  if (!payload?.active || !payload?.signature) {
+    try {
+      fs.rmSync(getPlayerLockPath(), { force: true });
+    } catch (_error) {
+      // ignore
+    }
+    return { active: false };
+  }
+
+  const position = payload?.position || {};
+  const nextPayload = {
+    signature: String(payload?.signature || ''),
+    position: {
+      x: Number(position.x),
+      y: Number(position.y),
+      z: Number(position.z),
+    },
+    updatedAt: new Date().toISOString(),
+  };
+
+  fs.writeFileSync(getPlayerLockPath(), JSON.stringify(nextPayload, null, 2), 'utf8');
+  return readPlayerLock();
+}
 
 function sanitizeBounds(bounds, fallback) {
   const safeFallback = fallback || DEFAULT_WINDOW_BOUNDS;
@@ -78,6 +134,7 @@ function loadSettings() {
 
       settings = {
         ...DEFAULT_SETTINGS,
+        ...payload,
         // Always boot into the normal livemap; marker-only remains a runtime toggle.
         markerOnlyMode: false,
         markerCooldownsByChannel: payload.markerCooldownsByChannel || {},
@@ -215,6 +272,10 @@ function startPlayerStream(window) {
   const scriptPath = path.join(__dirname, '..', 'scripts', 'playerposition.py');
   playerProcess = spawn(getPythonCommand(), [scriptPath, '--json'], {
     cwd: __dirname,
+    env: {
+      ...process.env,
+      PLAYERPOSITION_LOCK_PATH: getPlayerLockPath(),
+    },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
@@ -371,6 +432,9 @@ function createWindow() {
     if (plannerWindow && !plannerWindow.isDestroyed()) {
       plannerWindow.close();
     }
+    if (tutorialWindow && !tutorialWindow.isDestroyed()) {
+      tutorialWindow.close();
+    }
   });
 }
 
@@ -433,6 +497,73 @@ function createPlannerWindow() {
   return plannerWindow;
 }
 
+function createTutorialWindow() {
+  if (tutorialWindow && !tutorialWindow.isDestroyed()) {
+    return tutorialWindow;
+  }
+
+  const referenceBounds = mainWindow && !mainWindow.isDestroyed()
+    ? mainWindow.getBounds()
+    : { x: 0, y: 0, width: DEFAULT_WINDOW_BOUNDS.width, height: DEFAULT_WINDOW_BOUNDS.height };
+  const display = screen.getDisplayNearestPoint({
+    x: referenceBounds.x + Math.round(referenceBounds.width / 2),
+    y: referenceBounds.y + Math.round(referenceBounds.height / 2),
+  });
+  const workArea = display?.workArea || display?.bounds || screen.getPrimaryDisplay().workArea;
+
+  tutorialWindow = new BrowserWindow({
+    x: workArea.x,
+    y: workArea.y,
+    width: workArea.width,
+    height: workArea.height,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    hasShadow: false,
+    backgroundColor: '#00000000',
+    alwaysOnTop: true,
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+
+  tutorialWindow.loadFile('tutorial.html');
+  const keepTutorialOnTop = () => {
+    if (!tutorialWindow || tutorialWindow.isDestroyed()) {
+      return;
+    }
+    tutorialWindow.setAlwaysOnTop(true, 'screen-saver');
+    tutorialWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  };
+
+  tutorialWindow.once('ready-to-show', () => {
+    if (tutorialWindow && !tutorialWindow.isDestroyed()) {
+      keepTutorialOnTop();
+      if (tutorialStepPayload) {
+        sendToWindow(tutorialWindow, 'tutorial-step', tutorialStepPayload);
+        tutorialWindow.show();
+        tutorialWindow.focus();
+      }
+    }
+  });
+  tutorialWindow.on('show', keepTutorialOnTop);
+  tutorialWindow.on('focus', keepTutorialOnTop);
+  tutorialWindow.on('blur', keepTutorialOnTop);
+  tutorialWindow.on('closed', () => {
+    tutorialWindow = null;
+  });
+
+  return tutorialWindow;
+}
+
 app.whenReady().then(() => {
   loadSettings();
   updater = createUpdater({
@@ -446,6 +577,10 @@ app.whenReady().then(() => {
   ipcMain.handle('ui-settings-set', (_event, patch) => {
     updateSettings(patch || {});
     return settings;
+  });
+  ipcMain.handle('player-lock-get', () => readPlayerLock());
+  ipcMain.handle('player-lock-set', (_event, payload) => {
+    return writePlayerLock(payload || {});
   });
   ipcMain.handle('window-minimize', () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -492,7 +627,12 @@ app.whenReady().then(() => {
 
     return 100;
   });
-  ipcMain.handle('window-get-bounds', () => {
+  ipcMain.handle('window-get-bounds', (_event) => {
+    const senderWindow = BrowserWindow.fromWebContents(_event.sender);
+    if (senderWindow && !senderWindow.isDestroyed()) {
+      return senderWindow.getBounds();
+    }
+
     const focusedWindow = BrowserWindow.getFocusedWindow();
     if (focusedWindow && !focusedWindow.isDestroyed()) {
       return focusedWindow.getBounds();
@@ -583,6 +723,60 @@ app.whenReady().then(() => {
     sendToWindow(mainWindow, 'route-state', routeState);
     broadcastRouteState();
     return true;
+  });
+  ipcMain.handle('tutorial-open', () => {
+    createTutorialWindow();
+    return true;
+  });
+  ipcMain.handle('tutorial-close', () => {
+    if (tutorialWindow && !tutorialWindow.isDestroyed()) {
+      tutorialWindow.close();
+    }
+    return true;
+  });
+  ipcMain.handle('tutorial-step-update', (_event, payload) => {
+    tutorialStepPayload = payload || null;
+    createTutorialWindow();
+    if (tutorialWindow && !tutorialWindow.isDestroyed()) {
+      const workArea = payload?.workArea
+        || (mainWindow && !mainWindow.isDestroyed()
+          ? (() => {
+              const bounds = mainWindow.getBounds();
+              const display = screen.getDisplayNearestPoint({
+                x: bounds.x + Math.round(bounds.width / 2),
+                y: bounds.y + Math.round(bounds.height / 2),
+              });
+              return display?.workArea || display?.bounds || screen.getPrimaryDisplay().workArea;
+            })()
+          : screen.getPrimaryDisplay().workArea);
+      tutorialWindow.setBounds({
+        x: workArea.x,
+        y: workArea.y,
+        width: workArea.width,
+        height: workArea.height,
+      });
+    }
+    sendToWindow(tutorialWindow, 'tutorial-step', tutorialStepPayload);
+    if (tutorialWindow && !tutorialWindow.isDestroyed() && !tutorialWindow.webContents.isLoading()) {
+      tutorialWindow.show();
+      tutorialWindow.focus();
+    }
+    return true;
+  });
+  ipcMain.handle('tutorial-action', (_event, action) => {
+    sendToWindow(mainWindow, 'tutorial-action', action);
+    return true;
+  });
+  ipcMain.handle('display-workarea-get', (_event) => {
+    const senderWindow = BrowserWindow.fromWebContents(_event.sender);
+    const referenceBounds = senderWindow && !senderWindow.isDestroyed()
+      ? senderWindow.getBounds()
+      : (mainWindow && !mainWindow.isDestroyed() ? mainWindow.getBounds() : { x: 0, y: 0, ...DEFAULT_WINDOW_BOUNDS });
+    const display = screen.getDisplayNearestPoint({
+      x: referenceBounds.x + Math.round(referenceBounds.width / 2),
+      y: referenceBounds.y + Math.round(referenceBounds.height / 2),
+    });
+    return display?.workArea || display?.bounds || screen.getPrimaryDisplay().workArea;
   });
   ipcMain.handle('updater-state-get', () => updater.getState());
   ipcMain.handle('updater-install-now', async () => {
