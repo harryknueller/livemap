@@ -259,15 +259,53 @@ if ($processStillRunning) {
 
 $exclude = @('.git', 'node_modules', '__pycache__')
 
+function Should-Exclude([string]$Name) {
+  return $exclude -contains $Name
+}
+
+function Sync-Directory([string]$SourcePath, [string]$DestinationPath) {
+  if (-not (Test-Path -LiteralPath $DestinationPath)) {
+    New-Item -ItemType Directory -Path $DestinationPath -Force | Out-Null
+  }
+
+  $sourceChildren = @(Get-ChildItem -LiteralPath $SourcePath -Force | Where-Object { -not (Should-Exclude $_.Name) })
+  $sourceNames = @{}
+  foreach ($child in $sourceChildren) {
+    $sourceNames[$child.Name] = $true
+  }
+
+  Get-ChildItem -LiteralPath $DestinationPath -Force -ErrorAction SilentlyContinue |
+    Where-Object { -not (Should-Exclude $_.Name) -and -not $sourceNames.ContainsKey($_.Name) } |
+    ForEach-Object {
+      Remove-Item -LiteralPath $_.FullName -Recurse -Force
+      [System.Windows.Forms.Application]::DoEvents()
+    }
+
+  foreach ($child in $sourceChildren) {
+    $destinationChild = Join-Path $DestinationPath $child.Name
+
+    if ($child.PSIsContainer) {
+      if (Test-Path -LiteralPath $destinationChild -PathType Leaf) {
+        Remove-Item -LiteralPath $destinationChild -Force
+      }
+      Sync-Directory -SourcePath $child.FullName -DestinationPath $destinationChild
+    } else {
+      if (Test-Path -LiteralPath $destinationChild -PathType Container) {
+        Remove-Item -LiteralPath $destinationChild -Recurse -Force
+      }
+      Copy-Item -LiteralPath $child.FullName -Destination $destinationChild -Force
+    }
+
+    [System.Windows.Forms.Application]::DoEvents()
+  }
+}
+
 try {
   Update-Status 'Dateien werden ersetzt' 52 'Neue Dateien werden in die Livemap kopiert.'
   Get-ChildItem -LiteralPath $SourceDir -Force | Where-Object { $exclude -notcontains $_.Name } | ForEach-Object {
     $destination = Join-Path $TargetDir $_.Name
     if ($_.PSIsContainer) {
-      if (Test-Path -LiteralPath $destination) {
-        Remove-Item -LiteralPath $destination -Recurse -Force
-      }
-      Copy-Item -LiteralPath $_.FullName -Destination $destination -Recurse -Force
+      Sync-Directory -SourcePath $_.FullName -DestinationPath $destination
     } else {
       $destinationDir = Split-Path -Parent $destination
       if (-not (Test-Path -LiteralPath $destinationDir)) {
