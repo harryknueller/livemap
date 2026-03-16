@@ -1,7 +1,7 @@
 import argparse
 import json
 import struct
-from scapy.all import sniff, TCP
+from scapy.all import sniff, TCP, IP
 
 SERVER_IP = "5.196.0.1"   # optional anpassen
 CHANNEL_PORTS = (6061, 6062, 6063, 6064)
@@ -45,13 +45,28 @@ def handle_packet(packet):
     if not result:
         return
 
-    port = tcp_layer.dport
-    if tcp_layer.sport in CHANNEL_PORTS:
-        port = tcp_layer.sport
-    elif tcp_layer.dport in CHANNEL_PORTS:
-        port = tcp_layer.dport
+    port = None
+
+    # Prefer the server-side channel port. That makes channel detection stable
+    # even when client-side packets use the same local stream in both directions.
+    if packet.haslayer(IP):
+        ip_layer = packet[IP]
+        if ip_layer.src == SERVER_IP and tcp_layer.sport in CHANNEL_PORTS:
+            port = tcp_layer.sport
+        elif ip_layer.dst == SERVER_IP and tcp_layer.dport in CHANNEL_PORTS:
+            port = tcp_layer.dport
+
+    if port is None:
+        if tcp_layer.sport in CHANNEL_PORTS:
+            port = tcp_layer.sport
+        elif tcp_layer.dport in CHANNEL_PORTS:
+            port = tcp_layer.dport
+
+    if port is None:
+        return
 
     result["port"] = int(port)
+    result["channel"] = int(port)
 
     if ARGS.json:
         print(json.dumps(result), flush=True)
