@@ -137,6 +137,7 @@ let closeLegendMenuTimer = null;
 let categoryFilterMemory = {};
 let lastValidInventoryUsage = null;
 const markerIconImageCache = new Map();
+const markerOnlySpriteCache = new Map();
 const layerVisibilityTimers = new Map();
 let markerSpatialIndex = new Map();
 let markerEntriesById = new Map();
@@ -172,11 +173,15 @@ const MAP_FOLLOW_EPSILON = 1.0;
 const PLAYER_RENDER_LERP = 0.3;
 const PLAYER_RENDER_SNAP = 0.12;
 const MARKER_ONLY_CULL_MARGIN = 16;
+const MARKER_ONLY_QUERY_MARGIN = 32;
 const MARKER_LAYER_FADE_MS = 160;
 const MARKER_ONLY_ZOOM = 2.6;
 const MARKER_ONLY_SCALE = 2 ** MARKER_ONLY_ZOOM;
 const MARKER_ONLY_RENDER_LERP = 0.2;
+const MARKER_ONLY_RENDER_LERP_FAST = 0.38;
 const MARKER_ONLY_RENDER_SNAP = 0.12;
+const MARKER_ONLY_RENDER_SNAP_FAST = 0.45;
+const MARKER_ONLY_FAST_DISTANCE = 3.2;
 const MARKER_ONLY_ICON_SIZE = 28;
 const MARKER_DEACTIVATION_DISTANCE = 3;
 const MARKER_DEACTIVATION_DWELL_MS = 3000;
@@ -229,6 +234,45 @@ function queryNearbyMarkerEntries(x, y) {
   }
 
   return entries;
+}
+
+function queryVisibleMarkerEntriesForMarkerOnly(centerPosition, width, height) {
+  if (!Number.isFinite(centerPosition?.x) || !Number.isFinite(centerPosition?.y)) {
+    return [];
+  }
+
+  const halfWorldWidth = ((width / 2) + MARKER_ONLY_QUERY_MARGIN) / MARKER_ONLY_SCALE * METERS_PER_PIXEL_X;
+  const halfWorldHeight = ((height / 2) + MARKER_ONLY_QUERY_MARGIN) / MARKER_ONLY_SCALE * METERS_PER_PIXEL_Z;
+  const minX = centerPosition.x - halfWorldWidth;
+  const maxX = centerPosition.x + halfWorldWidth;
+  const minY = centerPosition.y - halfWorldHeight;
+  const maxY = centerPosition.y + halfWorldHeight;
+
+  const minCellX = Math.floor(minX / MARKER_SPATIAL_CELL_SIZE);
+  const maxCellX = Math.floor(maxX / MARKER_SPATIAL_CELL_SIZE);
+  const minCellY = Math.floor(minY / MARKER_SPATIAL_CELL_SIZE);
+  const maxCellY = Math.floor(maxY / MARKER_SPATIAL_CELL_SIZE);
+  const visibleEntries = [];
+
+  for (let cellX = minCellX; cellX <= maxCellX; cellX += 1) {
+    for (let cellY = minCellY; cellY <= maxCellY; cellY += 1) {
+      const bucket = markerSpatialIndex.get(`${cellX}:${cellY}`);
+      if (!bucket?.length) {
+        continue;
+      }
+
+      for (const entry of bucket) {
+        if (
+          entry.x >= minX && entry.x <= maxX
+          && entry.y >= minY && entry.y <= maxY
+        ) {
+          visibleEntries.push(entry);
+        }
+      }
+    }
+  }
+
+  return visibleEntries;
 }
 
 function findNearestActiveMarkerEntry(x, y) {
@@ -1701,8 +1745,11 @@ function animateMarkerOnlyCanvas() {
   const deltaX = markerOnlyTargetPosition.x - markerOnlyDisplayPosition.x;
   const deltaY = markerOnlyTargetPosition.y - markerOnlyDisplayPosition.y;
   const distance = Math.hypot(deltaX, deltaY);
+  const isFastMovement = distance >= MARKER_ONLY_FAST_DISTANCE;
+  const lerpFactor = isFastMovement ? MARKER_ONLY_RENDER_LERP_FAST : MARKER_ONLY_RENDER_LERP;
+  const snapDistance = isFastMovement ? MARKER_ONLY_RENDER_SNAP_FAST : MARKER_ONLY_RENDER_SNAP;
 
-  if (distance <= MARKER_ONLY_RENDER_SNAP) {
+  if (distance <= snapDistance) {
     markerOnlyDisplayPosition = { ...markerOnlyTargetPosition };
     scheduleMarkerOnlyCanvasDraw();
     markerOnlyAnimationFrame = null;
@@ -1710,8 +1757,8 @@ function animateMarkerOnlyCanvas() {
   }
 
   markerOnlyDisplayPosition = {
-    x: markerOnlyDisplayPosition.x + (deltaX * MARKER_ONLY_RENDER_LERP),
-    y: markerOnlyDisplayPosition.y + (deltaY * MARKER_ONLY_RENDER_LERP),
+    x: markerOnlyDisplayPosition.x + (deltaX * lerpFactor),
+    y: markerOnlyDisplayPosition.y + (deltaY * lerpFactor),
   };
 
   scheduleMarkerOnlyCanvasDraw();
@@ -1845,7 +1892,8 @@ function drawMarkerOnlyCanvas() {
     ctx.restore();
   }
 
-  for (const entry of markerEntriesById.values()) {
+  const visibleEntries = queryVisibleMarkerEntriesForMarkerOnly(displayPosition, width, height);
+  for (const entry of visibleEntries) {
     if (!activeOreFilters.has(entry.key)) {
       continue;
     }
@@ -1855,7 +1903,7 @@ function drawMarkerOnlyCanvas() {
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
     ctx.lineWidth = 1;
 
-    const markerPixel = gameToPixel(entry.x, entry.y);
+    const markerPixel = entry.pixel;
     const drawX = centerX + ((markerPixel.x - displayPixel.x) * MARKER_ONLY_SCALE);
     const drawY = centerY - ((markerPixel.y - displayPixel.y) * MARKER_ONLY_SCALE);
 
@@ -1871,55 +1919,9 @@ function drawMarkerOnlyCanvas() {
       : null;
 
     if (iconImage.complete && iconImage.naturalWidth > 0) {
-      const iconSize = MARKER_ONLY_ICON_SIZE;
-      const halfIconSize = iconSize / 2;
-
-      if (cooldownLabel) {
-        ctx.save();
-        ctx.filter = 'grayscale(1) saturate(0.12) brightness(0.92)';
-        ctx.globalAlpha = 0.32;
-        ctx.shadowColor = 'rgba(0, 0, 0, 1)';
-        ctx.shadowBlur = 3;
-        ctx.shadowOffsetX = 0;
-        ctx.shadowOffsetY = 0;
-        ctx.drawImage(iconImage, drawX - halfIconSize, drawY - halfIconSize, iconSize, iconSize);
-        ctx.restore();
-        ctx.save();
-        ctx.filter = 'grayscale(1) saturate(0.12) brightness(0.92)';
-        ctx.globalAlpha = 0.32;
-        ctx.shadowColor = 'rgba(0, 0, 0, 0.82)';
-        ctx.shadowBlur = 11;
-        ctx.shadowOffsetX = 0;
-        ctx.shadowOffsetY = 3;
-        ctx.drawImage(iconImage, drawX - halfIconSize, drawY - halfIconSize, iconSize, iconSize);
-        ctx.restore();
-        ctx.save();
-        ctx.filter = 'grayscale(1) saturate(0.12) brightness(0.92)';
-        ctx.globalAlpha = 0.32;
-        ctx.drawImage(iconImage, drawX - halfIconSize, drawY - halfIconSize, iconSize, iconSize);
-        ctx.restore();
-        ctx.save();
-        ctx.fillStyle = 'rgba(14, 18, 22, 0.42)';
-        ctx.beginPath();
-        ctx.arc(drawX, drawY, (iconSize / 2) - 1, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
-      } else {
-        ctx.save();
-        ctx.shadowColor = 'rgba(0, 0, 0, 1)';
-        ctx.shadowBlur = 3;
-        ctx.shadowOffsetX = 0;
-        ctx.shadowOffsetY = 0;
-        ctx.drawImage(iconImage, drawX - halfIconSize, drawY - halfIconSize, iconSize, iconSize);
-        ctx.restore();
-        ctx.save();
-        ctx.shadowColor = 'rgba(0, 0, 0, 0.72)';
-        ctx.shadowBlur = 9;
-        ctx.shadowOffsetX = 0;
-        ctx.shadowOffsetY = 3;
-        ctx.drawImage(iconImage, drawX - halfIconSize, drawY - halfIconSize, iconSize, iconSize);
-        ctx.restore();
-        ctx.drawImage(iconImage, drawX - halfIconSize, drawY - halfIconSize, iconSize, iconSize);
+      const sprite = getMarkerOnlySprite(entry.marker, Boolean(cooldownLabel));
+      if (sprite) {
+        ctx.drawImage(sprite.canvas, drawX - sprite.halfWidth, drawY - sprite.halfHeight);
       }
     } else {
       ctx.beginPath();
@@ -1950,6 +1952,92 @@ function drawMarkerOnlyCanvas() {
       ctx.restore();
     }
   }
+}
+
+function getMarkerOnlySprite(marker, disabled) {
+  const cacheKey = `${marker.key}:${disabled ? 'disabled' : 'normal'}`;
+  if (markerOnlySpriteCache.has(cacheKey)) {
+    return markerOnlySpriteCache.get(cacheKey);
+  }
+
+  const iconImage = getMarkerIconImage(marker);
+  if (!iconImage.complete || iconImage.naturalWidth <= 0) {
+    return null;
+  }
+
+  const iconSize = MARKER_ONLY_ICON_SIZE;
+  const padding = 16;
+  const canvas = document.createElement('canvas');
+  canvas.width = iconSize + (padding * 2);
+  canvas.height = iconSize + (padding * 2);
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    return null;
+  }
+
+  const x = padding;
+  const y = padding;
+
+  if (disabled) {
+    ctx.save();
+    ctx.filter = 'grayscale(1) saturate(0.12) brightness(0.92)';
+    ctx.globalAlpha = 0.32;
+    ctx.shadowColor = 'rgba(0, 0, 0, 1)';
+    ctx.shadowBlur = 3;
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 0;
+    ctx.drawImage(iconImage, x, y, iconSize, iconSize);
+    ctx.restore();
+
+    ctx.save();
+    ctx.filter = 'grayscale(1) saturate(0.12) brightness(0.92)';
+    ctx.globalAlpha = 0.32;
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.82)';
+    ctx.shadowBlur = 11;
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 3;
+    ctx.drawImage(iconImage, x, y, iconSize, iconSize);
+    ctx.restore();
+
+    ctx.save();
+    ctx.filter = 'grayscale(1) saturate(0.12) brightness(0.92)';
+    ctx.globalAlpha = 0.32;
+    ctx.drawImage(iconImage, x, y, iconSize, iconSize);
+    ctx.restore();
+
+    ctx.save();
+    ctx.fillStyle = 'rgba(14, 18, 22, 0.42)';
+    ctx.beginPath();
+    ctx.arc(x + (iconSize / 2), y + (iconSize / 2), (iconSize / 2) - 1, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  } else {
+    ctx.save();
+    ctx.shadowColor = 'rgba(0, 0, 0, 1)';
+    ctx.shadowBlur = 3;
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 0;
+    ctx.drawImage(iconImage, x, y, iconSize, iconSize);
+    ctx.restore();
+
+    ctx.save();
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.72)';
+    ctx.shadowBlur = 9;
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 3;
+    ctx.drawImage(iconImage, x, y, iconSize, iconSize);
+    ctx.restore();
+
+    ctx.drawImage(iconImage, x, y, iconSize, iconSize);
+  }
+
+  const sprite = {
+    canvas,
+    halfWidth: canvas.width / 2,
+    halfHeight: canvas.height / 2,
+  };
+  markerOnlySpriteCache.set(cacheKey, sprite);
+  return sprite;
 }
 function updateOpacityLabel(value) {
   [opacityButton].forEach((button) => {
@@ -2191,6 +2279,7 @@ function buildOreLayers() {
         color,
         x,
         y,
+        pixel: gameToPixel(x, y),
       };
       markerEntriesById.set(markerId, markerEntry);
       addMarkerEntryToSpatialIndex(markerEntry);

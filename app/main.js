@@ -78,7 +78,8 @@ function loadSettings() {
 
       settings = {
         ...DEFAULT_SETTINGS,
-        markerOnlyMode: Boolean(payload.markerOnlyMode),
+        // Always boot into the normal livemap; marker-only remains a runtime toggle.
+        markerOnlyMode: false,
         markerCooldownsByChannel: payload.markerCooldownsByChannel || {},
         normalView: {
           ...DEFAULT_SETTINGS.normalView,
@@ -211,7 +212,7 @@ function getPythonCommand() {
 }
 
 function startPlayerStream(window) {
-  const scriptPath = path.join(__dirname, 'playerposition.py');
+  const scriptPath = path.join(__dirname, '..', 'scripts', 'playerposition.py');
   playerProcess = spawn(getPythonCommand(), [scriptPath, '--json'], {
     cwd: __dirname,
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -256,7 +257,7 @@ function startPlayerStream(window) {
 }
 
 function startInventoryStream(window) {
-  const scriptPath = path.join(__dirname, 'inventar.py');
+  const scriptPath = path.join(__dirname, '..', 'scripts', 'inventar.py');
   inventoryProcess = spawn(getPythonCommand(), [scriptPath, '--json'], {
     cwd: __dirname,
     stdio: ['ignore', 'pipe', 'pipe'],

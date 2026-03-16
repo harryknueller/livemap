@@ -51,6 +51,14 @@ function getLocalGitCommit(appDirectory) {
   return null;
 }
 
+function getProjectRoot(app) {
+  if (app.isPackaged) {
+    return path.dirname(process.execPath);
+  }
+
+  return path.resolve(app.getAppPath(), '..');
+}
+
 async function fetchJson(url) {
   const response = await fetch(url, {
     headers: {
@@ -305,7 +313,7 @@ try {
     if (-not (Test-Path -LiteralPath $npmPath)) {
       throw 'cmd.exe wurde nicht gefunden.'
     }
-    Start-Process -FilePath $npmPath -ArgumentList @('/d', '/c', 'npm.cmd start') -WorkingDirectory $TargetDir -WindowStyle Hidden
+    Start-Process -FilePath $npmPath -ArgumentList @('/d', '/c', 'set ELECTRON_RUN_AS_NODE=&& npm.cmd start') -WorkingDirectory $AppPath -WindowStyle Hidden
   }
 
   Update-Status 'Patch erfolgreich abgeschlossen' 100 'Das Fenster schließt sich gleich automatisch.'
@@ -440,7 +448,8 @@ function createUpdater({
       return fromSettings;
     }
 
-    const gitCommit = getLocalGitCommit(app.getAppPath());
+    const projectRoot = getProjectRoot(app);
+    const gitCommit = getLocalGitCommit(projectRoot);
     if (gitCommit) {
       savePersistedState({
         currentCommit: gitCommit,
@@ -592,7 +601,7 @@ function createUpdater({
       powershellPath,
       applyScriptPath: scriptPath,
       sourceDir: pendingUpdate.sourceRoot,
-      targetDir: app.getAppPath(),
+      targetDir: getProjectRoot(app),
       execPath: process.execPath,
       appPath: relaunchAppPath,
       settingsPath: getUpdaterStatePath(),
@@ -608,7 +617,7 @@ function createUpdater({
         `PowerShell: ${powershellPath}`,
         `Bootstrap: ${bootstrapPath}`,
         `Script: ${scriptPath}`,
-        `Target: ${app.getAppPath()}`,
+        `Target: ${getProjectRoot(app)}`,
         `Exec: ${process.execPath}`,
         `Commit: ${pendingUpdate.commit}`,
         '',
