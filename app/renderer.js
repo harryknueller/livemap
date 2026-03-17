@@ -242,12 +242,6 @@ const TUTORIAL_STEPS = [
     },
   },
   {
-    title: 'Spieler-Lock',
-    targetLabel: 'Lock-Button',
-    text: 'Wenn die Spielerposition nicht erkannt wird oder zwischen anderen Spielern hin und her springt, entferne dich zuerst von anderen Spielern und stelle dich allein irgendwo hin. Prüfe dann, ob die Koordinaten korrekt laufen. Erst danach aktivierst du diesen Button. So speicherst du genau deine eigene Signatur für zukünftige Erkennung.',
-    selector: '#playerLockButton',
-  },
-  {
     title: 'Routenplaner',
     targetLabel: 'Routenplaner',
     text: 'Der Routenplaner berechnet mehrere effiziente Routen, zeigt Details an und kann eine aktive Route später wieder aufnehmen.',

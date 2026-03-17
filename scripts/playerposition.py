@@ -8,6 +8,7 @@ from time import monotonic
 from scapy.all import sniff, TCP, IP
 
 CHANNEL_PORTS = (6061, 6062, 6063, 6064)
+PLAYER_PAYLOAD_LENGTH = 274
 LOG_PATH = Path(__file__).with_name("playerposition.log")
 LOCK_STATE_PATH = Path(os.environ.get("PLAYERPOSITION_LOCK_PATH", str(Path(__file__).with_name("playerposition-lock.json"))))
 BUFFER_LIMIT = 65536
@@ -124,44 +125,7 @@ def position_distance(a, b):
 
 def maybe_handle_manual_lock_requests():
 
-    global HARD_LOCK_POSITION
-    global HARD_LOCK_SIGNATURE
-    global LOCK_STATE_MTIME
-
-    if not LOCK_STATE_PATH.exists():
-        if LOCK_STATE_MTIME is not None or HARD_LOCK_POSITION is not None or HARD_LOCK_SIGNATURE is not None:
-            HARD_LOCK_POSITION = None
-            HARD_LOCK_SIGNATURE = None
-            LOCK_STATE_MTIME = None
-            write_log("HARD_LOCK_CLEARED")
-        return
-
-    try:
-        current_mtime = LOCK_STATE_PATH.stat().st_mtime_ns
-    except Exception:
-        return
-
-    if LOCK_STATE_MTIME == current_mtime:
-        return
-
-    try:
-        payload = json.loads(LOCK_STATE_PATH.read_text(encoding="utf-8"))
-        position = payload.get("position") or {}
-        signature = payload.get("signature")
-        x = float(position["x"])
-        z = float(position["z"])
-        y = float(position["y"])
-        if not isinstance(signature, str) or not signature:
-            raise ValueError("signature fehlt")
-        HARD_LOCK_POSITION = {"x": x, "z": z, "y": y}
-        HARD_LOCK_SIGNATURE = signature
-        LOCK_STATE_MTIME = current_mtime
-        write_log(
-            "HARD_LOCK_LOADED "
-            f"x={x:.2f} z={z:.2f} y={y:.2f} signature={signature}"
-        )
-    except Exception as error:
-        write_log(f"HARD_LOCK_LOAD_FAILED error={error}")
+    return
 
 
 def is_dummy_position(position):
@@ -228,13 +192,48 @@ def build_triplet_signature(buffer, marker_pos, consumed):
     return header_bytes.hex()
 
 
+def hard_lock_distance(position):
+
+    if HARD_LOCK_POSITION is None:
+        return None
+
+    return position_distance(position, HARD_LOCK_POSITION)
+
+
+def maybe_migrate_hard_lock_signature(position):
+
+    global HARD_LOCK_SIGNATURE
+
+    if HARD_LOCK_POSITION is None:
+        return False
+
+    distance = hard_lock_distance(position)
+    if distance is None or distance > HARD_LOCK_RADIUS:
+        return False
+
+    next_signature = position.get("signature")
+    if not next_signature:
+        return False
+
+    previous_signature = HARD_LOCK_SIGNATURE
+    HARD_LOCK_SIGNATURE = next_signature
+    write_log(
+        "HARD_LOCK_SIGNATURE_MIGRATED "
+        f"distance={distance:.2f} old={previous_signature} new={next_signature} "
+        f"x={position['x']:.2f} z={position['z']:.2f} y={position['y']:.2f}"
+    )
+    return True
+
+
 def passes_hard_lock(position):
 
     if HARD_LOCK_POSITION is None:
         return True
 
     if HARD_LOCK_SIGNATURE:
-        return position.get("signature") == HARD_LOCK_SIGNATURE
+        if position.get("signature") == HARD_LOCK_SIGNATURE:
+            return True
+        return maybe_migrate_hard_lock_signature(position)
 
     return position_distance(position, HARD_LOCK_POSITION) <= HARD_LOCK_RADIUS
 
@@ -242,16 +241,19 @@ def passes_hard_lock(position):
 def refresh_hard_lock_position(position):
 
     global HARD_LOCK_POSITION
+    global HARD_LOCK_SIGNATURE
 
     if HARD_LOCK_POSITION is None:
         return
 
-    if HARD_LOCK_SIGNATURE and position.get("signature") == HARD_LOCK_SIGNATURE:
+    if not HARD_LOCK_SIGNATURE or position.get("signature") == HARD_LOCK_SIGNATURE:
         HARD_LOCK_POSITION = {
             "x": position["x"],
             "z": position["z"],
             "y": position["y"],
         }
+        if position.get("signature"):
+            HARD_LOCK_SIGNATURE = position.get("signature")
 
 
 def accept_hard_locked_position(position):
@@ -443,7 +445,7 @@ def filter_detected_position(position):
     global LAST_EMITTED_POSITION
 
     if HARD_LOCK_SIGNATURE:
-        if position.get("signature") != HARD_LOCK_SIGNATURE:
+        if position.get("signature") != HARD_LOCK_SIGNATURE and not maybe_migrate_hard_lock_signature(position):
             write_log(
                 "REJECT_HARD_LOCK_SIGNATURE "
                 f"parser={position.get('parser')} "
@@ -655,16 +657,13 @@ def parse_locked_positions_from_buffer(buffer):
     return positions, buffer[keep_from:]
 
 
-def parse_positions_from_buffer(buffer):
+def parse_positions_from_buffer_generic(buffer):
 
     positions = []
     scan_index = 0
     last_consumed = 0
     required_bytes = len(PLAYER_HEADER) + 27
     min_keep = max(len(PLAYER_HEADER), len(FIELD_MARKER) * 3 + 12)
-
-    if HARD_LOCK_SIGNATURE:
-        return parse_locked_positions_from_buffer(buffer)
 
     while True:
 
@@ -728,6 +727,10 @@ def parse_positions_from_buffer(buffer):
     return positions, buffer[-min_keep:]
 
 
+def parse_positions_from_buffer(buffer):
+    return parse_positions_from_buffer_generic(buffer)
+
+
 def handle_packet(packet):
 
     if not packet.haslayer(TCP):
@@ -753,6 +756,17 @@ def handle_packet(packet):
                 f"count={DEBUG_STATE['short_payload_count']} "
                 f"src={source_ip}:{tcp_layer.sport} dst={destination_ip}:{tcp_layer.dport} "
                 f"payload_len={len(payload)}"
+            )
+        return
+
+    if len(payload) != PLAYER_PAYLOAD_LENGTH:
+        DEBUG_STATE["short_payload_count"] += 1
+        if DEBUG_STATE["short_payload_count"] <= 5 or DEBUG_STATE["short_payload_count"] % 50 == 0:
+            write_log(
+                "SKIP_PAYLOAD_LENGTH "
+                f"count={DEBUG_STATE['short_payload_count']} "
+                f"src={source_ip}:{tcp_layer.sport} dst={destination_ip}:{tcp_layer.dport} "
+                f"payload_len={len(payload)} expected={PLAYER_PAYLOAD_LENGTH}"
             )
         return
 
@@ -813,7 +827,8 @@ ARGS = parser.parse_args()
 
 write_log(
     "START "
-    f"json={ARGS.json} ports={','.join(str(port) for port in CHANNEL_PORTS)}"
+    f"json={ARGS.json} ports={','.join(str(port) for port in CHANNEL_PORTS)} "
+    f"payload_len={PLAYER_PAYLOAD_LENGTH} hard_lock=disabled"
 )
 
 if not ARGS.json:
