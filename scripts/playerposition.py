@@ -33,9 +33,8 @@ SELF_LOCK_SWITCH_CONFIRMATIONS = 6
 SELF_LOCK_TIMEOUT_SECONDS = 2.5
 HARD_LOCK_RADIUS = 22.0
 
-PLAYER_HEADER = bytes.fromhex(
-"000000c8000000030800000037e3951101001001"
-)
+PLAYER_HEADER_PREFIX = bytes.fromhex("000000c80000000308000000")
+PLAYER_HEADER_SUFFIX = bytes.fromhex("01001001")
 FIELD_MARKER = bytes.fromhex("0204000000")
 
 DEBUG_STATE = {
@@ -190,6 +189,28 @@ def build_triplet_signature(buffer, marker_pos, consumed):
     if not header_bytes:
         header_bytes = buffer[max(0, marker_pos - 8):marker_pos]
     return header_bytes.hex()
+
+
+def find_variable_player_header(buffer, start_index=0):
+
+    prefix_length = len(PLAYER_HEADER_PREFIX)
+    suffix_length = len(PLAYER_HEADER_SUFFIX)
+    search_index = start_index
+
+    while True:
+        prefix_pos = buffer.find(PLAYER_HEADER_PREFIX, search_index)
+        if prefix_pos == -1:
+            return -1
+
+        variable_start = prefix_pos + prefix_length
+        suffix_pos = variable_start + 4
+        if len(buffer) < suffix_pos + suffix_length:
+            return -2
+
+        if buffer[suffix_pos:suffix_pos + suffix_length] == PLAYER_HEADER_SUFFIX:
+            return prefix_pos
+
+        search_index = prefix_pos + 1
 
 
 def hard_lock_distance(position):
@@ -538,31 +559,43 @@ def parse_positions_from_buffer_generic(buffer):
     positions = []
     scan_index = 0
     last_consumed = 0
-    required_bytes = len(PLAYER_HEADER) + 27
-    min_keep = max(len(PLAYER_HEADER), len(FIELD_MARKER) * 3 + 12)
+    header_length = len(PLAYER_HEADER_PREFIX) + 4 + len(PLAYER_HEADER_SUFFIX)
+    required_bytes = header_length + 27
+    min_keep = max(header_length, len(FIELD_MARKER) * 3 + 12)
 
     while True:
 
-        pos = buffer.find(PLAYER_HEADER, scan_index)
+        pos = find_variable_player_header(buffer, scan_index)
 
         if pos == -1:
             break
+        if pos == -2:
+            return positions, buffer[max(0, len(buffer) - min_keep):]
 
-        offset = pos + len(PLAYER_HEADER)
+        offset = pos + header_length
         if len(buffer) < pos + required_bytes:
-            # Header found, but packet stream has not delivered the full payload yet.
             return positions, buffer[pos:]
 
         try:
-            x = struct.unpack("<f", buffer[offset+5:offset+9])[0]
-            z = struct.unpack("<f", buffer[offset+14:offset+18])[0]
-            y = struct.unpack("<f", buffer[offset+23:offset+27])[0]
+            if buffer[offset:offset + len(FIELD_MARKER)] != FIELD_MARKER:
+                scan_index = pos + 1
+                continue
+            if buffer[offset + 9:offset + 9 + len(FIELD_MARKER)] != FIELD_MARKER:
+                scan_index = pos + 1
+                continue
+            if buffer[offset + 18:offset + 18 + len(FIELD_MARKER)] != FIELD_MARKER:
+                scan_index = pos + 1
+                continue
+
+            x = struct.unpack("<f", buffer[offset + 5:offset + 9])[0]
+            z = struct.unpack("<f", buffer[offset + 14:offset + 18])[0]
+            y = struct.unpack("<f", buffer[offset + 23:offset + 27])[0]
             if all(is_plausible_coordinate(value) for value in (x, z, y)):
                 positions.append({
                     "x": x,
                     "z": z,
                     "y": y,
-                    "parser": "header",
+                    "parser": "variable_header_triplet",
                     "signature": buffer[pos:pos + required_bytes].hex(),
                 })
             last_consumed = pos + required_bytes
