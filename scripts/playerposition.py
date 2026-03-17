@@ -439,32 +439,6 @@ def accept_with_track_lock(position):
 
 
 def filter_detected_position(position):
-
-    global PENDING_TRIPLET
-    global PENDING_TRIPLET_AT
-    global LAST_EMITTED_POSITION
-
-    if HARD_LOCK_SIGNATURE:
-        if position.get("signature") != HARD_LOCK_SIGNATURE and not maybe_migrate_hard_lock_signature(position):
-            write_log(
-                "REJECT_HARD_LOCK_SIGNATURE "
-                f"parser={position.get('parser')} "
-                f"x={position['x']:.2f} z={position['z']:.2f} y={position['y']:.2f}"
-            )
-            return None
-
-        write_log(
-            "ACCEPT_HARD_LOCK_SIGNATURE "
-            f"parser={position.get('parser')} "
-            f"x={position['x']:.2f} z={position['z']:.2f} y={position['y']:.2f}"
-        )
-        PENDING_TRIPLET = None
-        PENDING_TRIPLET_AT = 0.0
-        return accept_hard_locked_position(position)
-
-    if position.get("parser") != "marker_triplet":
-        return accept_with_track_lock(position)
-
     if is_dummy_position(position):
         write_log(
             "REJECT_DUMMY "
@@ -472,105 +446,7 @@ def filter_detected_position(position):
         )
         return None
 
-    if is_layer_switch_against_last(position):
-        write_log(
-            "REJECT_LAYER_SWITCH "
-            f"x={position['x']:.2f} z={position['z']:.2f} y={position['y']:.2f}"
-        )
-        return None
-
-    now = monotonic()
-    if PENDING_TRIPLET and (now - PENDING_TRIPLET_AT) > PAIR_WINDOW_SECONDS:
-        if LAST_EMITTED_POSITION and position_distance(PENDING_TRIPLET, LAST_EMITTED_POSITION) <= STABLE_DISTANCE:
-            LAST_EMITTED_POSITION = PENDING_TRIPLET
-            write_log(
-                "ACCEPT_PENDING "
-                f"x={PENDING_TRIPLET['x']:.2f} z={PENDING_TRIPLET['z']:.2f} y={PENDING_TRIPLET['y']:.2f}"
-            )
-            accepted = PENDING_TRIPLET
-            PENDING_TRIPLET = position
-            PENDING_TRIPLET_AT = now
-            return accepted
-        PENDING_TRIPLET = None
-
-    if PENDING_TRIPLET is None:
-        PENDING_TRIPLET = position
-        PENDING_TRIPLET_AT = now
-        return None
-
-    if forms_vertical_pair(PENDING_TRIPLET, position):
-        midpoint = midpoint_position(PENDING_TRIPLET, position)
-        if not should_emit_position(midpoint):
-            write_log(
-                "SKIP_DUPLICATE_VERTICAL "
-                f"x={midpoint['x']:.2f} z={midpoint['z']:.2f} y={midpoint['y']:.2f}"
-            )
-            PENDING_TRIPLET = None
-            PENDING_TRIPLET_AT = 0.0
-            return None
-        write_log(
-            "ACCEPT_VERTICAL_MIDPOINT "
-            f"x={midpoint['x']:.2f} z={midpoint['z']:.2f} y={midpoint['y']:.2f}"
-        )
-        PENDING_TRIPLET = None
-        PENDING_TRIPLET_AT = 0.0
-        return accept_with_track_lock(midpoint)
-
-    if forms_paired_extents(PENDING_TRIPLET, position):
-        midpoint = midpoint_position(PENDING_TRIPLET, position)
-        if not should_emit_position(midpoint):
-            write_log(
-                "SKIP_DUPLICATE_MIDPOINT "
-                f"x={midpoint['x']:.2f} z={midpoint['z']:.2f} y={midpoint['y']:.2f}"
-            )
-            PENDING_TRIPLET = None
-            PENDING_TRIPLET_AT = 0.0
-            return None
-        write_log(
-            "ACCEPT_MIDPOINT "
-            f"x={midpoint['x']:.2f} z={midpoint['z']:.2f} y={midpoint['y']:.2f}"
-        )
-        PENDING_TRIPLET = None
-        PENDING_TRIPLET_AT = 0.0
-        return accept_with_track_lock(midpoint)
-
-    if position_distance(PENDING_TRIPLET, position) <= STABLE_DISTANCE:
-        if not should_emit_position(position):
-            write_log(
-                "SKIP_DUPLICATE_STABLE "
-                f"x={position['x']:.2f} z={position['z']:.2f} y={position['y']:.2f}"
-            )
-            PENDING_TRIPLET = None
-            PENDING_TRIPLET_AT = 0.0
-            return None
-        write_log(
-            "ACCEPT_STABLE "
-            f"x={position['x']:.2f} z={position['z']:.2f} y={position['y']:.2f}"
-        )
-        PENDING_TRIPLET = None
-        PENDING_TRIPLET_AT = 0.0
-        return accept_with_track_lock(position)
-
-    if LAST_EMITTED_POSITION and position_distance(position, LAST_EMITTED_POSITION) <= STABLE_DISTANCE:
-        if not should_emit_position(position):
-            write_log(
-                "SKIP_DUPLICATE_NEAR_LAST "
-                f"x={position['x']:.2f} z={position['z']:.2f} y={position['y']:.2f}"
-            )
-            PENDING_TRIPLET = None
-            PENDING_TRIPLET_AT = 0.0
-            return None
-        write_log(
-            "ACCEPT_NEAR_LAST "
-            f"x={position['x']:.2f} z={position['z']:.2f} y={position['y']:.2f}"
-        )
-        PENDING_TRIPLET = None
-        PENDING_TRIPLET_AT = 0.0
-        return accept_with_track_lock(position)
-
-    PENDING_TRIPLET = position
-    PENDING_TRIPLET_AT = now
-    return None
+    return position
 
 
 def try_unpack_position_triplet(buffer, marker_pos):
