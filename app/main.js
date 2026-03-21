@@ -6,6 +6,7 @@ const { createUpdater } = require('./updater');
 
 let playerProcess;
 let inventoryProcess;
+let altarProcess;
 let mainWindow = null;
 let plannerWindow = null;
 let tutorialWindow = null;
@@ -26,6 +27,7 @@ const DEFAULT_WINDOW_BOUNDS = {
 
 const DEFAULT_SETTINGS = {
   markerOnlyMode: false,
+  altarTrackingEnabled: false,
   markerCooldownsByChannel: {},
   normalView: {
     windowOpacity: 100,
@@ -230,6 +232,9 @@ function stopBackgroundProcesses() {
   if (inventoryProcess && !inventoryProcess.killed) {
     inventoryProcess.kill();
   }
+  if (altarProcess && !altarProcess.killed) {
+    altarProcess.kill();
+  }
 }
 
 function broadcastUpdaterState(state) {
@@ -355,6 +360,71 @@ function startInventoryStream(window) {
     sendToWindow(window, 'inventory-error', `Inventar-Stream beendet mit Code ${code ?? 'null'}`);
     inventoryProcess = null;
   });
+}
+
+function startAltarStream(window) {
+  if (altarProcess && !altarProcess.killed) {
+    return true;
+  }
+
+  const scriptPath = path.join(__dirname, '..', 'scripts', 'altarposition.py');
+  altarProcess = spawn(getPythonCommand(), [scriptPath, '--json'], {
+    cwd: __dirname,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  let stdoutBuffer = '';
+  altarProcess.stdout.on('data', (chunk) => {
+    stdoutBuffer += chunk.toString();
+    const lines = stdoutBuffer.split(/\r?\n/);
+    stdoutBuffer = lines.pop() ?? '';
+
+    for (const line of lines) {
+      if (!line.trim()) {
+        continue;
+      }
+
+      try {
+        const data = JSON.parse(line);
+        sendToWindow(window, 'altar-position', data);
+      } catch (_error) {
+        sendToWindow(window, 'altar-error', `Ungueltige Altar-JSON-Zeile: ${line}`);
+      }
+    }
+  });
+
+  altarProcess.stderr.on('data', (chunk) => {
+    const message = chunk.toString().trim();
+    if (message) {
+      sendToWindow(window, 'altar-error', message);
+    }
+  });
+
+  altarProcess.on('exit', (code) => {
+    sendToWindow(window, 'altar-error', `Altar-Stream beendet mit Code ${code ?? 'null'}`);
+    altarProcess = null;
+  });
+
+  return true;
+}
+
+function stopAltarStream() {
+  if (altarProcess && !altarProcess.killed) {
+    altarProcess.kill();
+  }
+}
+
+function setAltarTrackingEnabled(active) {
+  const nextActive = Boolean(active);
+  updateSettings({ altarTrackingEnabled: nextActive });
+
+  if (nextActive) {
+    startAltarStream(mainWindow);
+  } else {
+    stopAltarStream();
+  }
+
+  return settings;
 }
 
 function createWindow() {
@@ -582,6 +652,7 @@ app.whenReady().then(() => {
   ipcMain.handle('player-lock-set', (_event, payload) => {
     return writePlayerLock(payload || {});
   });
+  ipcMain.handle('altar-tracking-set', (_event, active) => setAltarTrackingEnabled(active));
   ipcMain.handle('window-minimize', () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.minimize();

@@ -54,6 +54,7 @@ const markerOnlyCanvas = document.getElementById('markerOnlyCanvas');
 const resizeHandles = document.getElementById('resizeHandles');
 const mapFrameButton = document.getElementById('mapFrameButton');
 const playerLockButton = document.getElementById('playerLockButton');
+const altarTrackerButton = document.getElementById('altarTrackerButton');
 const routePlannerButton = document.getElementById('routePlannerButton');
 const findNearestButton = document.getElementById('findNearestButton');
 const playerCenterButton = document.getElementById('playerCenterButton');
@@ -72,9 +73,20 @@ const routePlannerPanel = routePlannerOverlay?.querySelector('.planner-panel');
 const routePlannerHeader = routePlannerOverlay?.querySelector('.planner-header');
 const routeMarkerList = document.getElementById('routeMarkerList');
 const routeUsePlayerStartInput = document.getElementById('routeUsePlayerStart');
+const routeRequirePersonalAltarInput = document.getElementById('routeRequirePersonalAltar');
+const routeRequireGuildAltarInput = document.getElementById('routeRequireGuildAltar');
+const routeRequireBothAltarsInput = document.getElementById('routeRequireBothAltars');
 const routeGenerateButton = document.getElementById('routeGenerateButton');
 const routeAbortButton = document.getElementById('routeAbortButton');
 const routeResultsList = document.getElementById('routeResultsList');
+const altarOverlay = document.getElementById('altarOverlay');
+const altarBackdrop = document.getElementById('altarBackdrop');
+const altarCloseButton = document.getElementById('altarCloseButton');
+const altarSearchInput = document.getElementById('altarSearchInput');
+const altarClearSelectionButton = document.getElementById('altarClearSelectionButton');
+const altarSelectionSummary = document.getElementById('altarSelectionSummary');
+const altarResultsMeta = document.getElementById('altarResultsMeta');
+const altarResultsList = document.getElementById('altarResultsList');
 const confirmDialog = document.getElementById('confirmDialog');
 const confirmDialogMessage = document.getElementById('confirmDialogMessage');
 const confirmDialogCancel = document.getElementById('confirmDialogCancel');
@@ -117,6 +129,29 @@ const MAP_CENTER_OFFSET = {
   x: 0,
   z: 0,
 };
+const BUILD_AREA_RADIUS_METERS = 450;
+const BUILD_AREA_RADIUS_PIXELS = BUILD_AREA_RADIUS_METERS / ((METERS_PER_PIXEL_X + METERS_PER_PIXEL_Z) / 2);
+const ALTAR_RADIUS_METERS = 5000;
+const ALTAR_RADIUS_PIXELS = ALTAR_RADIUS_METERS / ((METERS_PER_PIXEL_X + METERS_PER_PIXEL_Z) / 2);
+const PERSONAL_ALTAR_ICON_PATH = 'marker/standart/altar.png';
+const GUILD_ALTAR_ICON_PATH = 'marker/standart/gildenaltar.png';
+const CENTER_ICON_PATH = 'map/playercenter.png';
+const CLUSTER_HIDDEN_BUILD_AREA_KEYS = new Set([
+  'standart/gefährlicher_bau',
+  'standart/sicherer_bau',
+]);
+const BUILD_AREA_STYLES = {
+  'standart/gefährlicher_bau': {
+    color: '#ef4444',
+    fillColor: '#ef4444',
+    fillOpacity: 0.18,
+  },
+  'standart/sicherer_bau': {
+    color: '#3b82f6',
+    fillColor: '#3b82f6',
+    fillOpacity: 0.18,
+  },
+};
 
 let map;
 let oreData = {};
@@ -126,6 +161,14 @@ let oreLayers = new Map();
 let markerOnlyOreLayers = new Map();
 let tileOverlays = [];
 let playerMarker = null;
+let altarLayer = null;
+let altarMarkers = new Map();
+let altarsVisible = true;
+let altarTrackingEnabled = false;
+let altarEntries = new Map();
+let altarSearchQuery = '';
+let selectedPersonalAltarId = null;
+let selectedGuildAltarId = null;
 let playerDistanceBadge = null;
 let didAutoCenterPlayer = false;
 let lastFollowPosition = null;
@@ -177,6 +220,7 @@ let tutorialStepIndex = 0;
 let tutorialHighlightedElement = null;
 let tutorialRunningTransition = false;
 let tutorialRequiredAction = null;
+let buildAreaCircles = [];
 const CHANNEL_BY_PORT = {
   6061: { label: '🛡️ CH 1', state: 'normal' },
   6062: { label: '🛡️ CH 2', state: 'normal' },
@@ -478,6 +522,12 @@ function findNearestActiveMarkerEntry(x, y) {
           if (!activeOreFilters.has(entry.key)) {
             continue;
           }
+          if (entry.marker?.category === 'standart') {
+            continue;
+          }
+          if (isAltarIntersectionFilterActive() && !isPointInsideBothAltars(entry.x, entry.y)) {
+            continue;
+          }
           if (isMarkerOnCooldown(entry.id)) {
             continue;
           }
@@ -497,6 +547,83 @@ function findNearestActiveMarkerEntry(x, y) {
   }
 
   return bestEntry;
+}
+
+function getSelectedAltarEntries() {
+  return {
+    personal: selectedPersonalAltarId ? altarEntries.get(selectedPersonalAltarId) : null,
+    guild: selectedGuildAltarId ? altarEntries.get(selectedGuildAltarId) : null,
+  };
+}
+
+function isPointInsidePersonalAltar(x, y) {
+  const { personal } = getSelectedAltarEntries();
+  if (!personal) {
+    return false;
+  }
+
+  return Math.hypot(x - personal.x, y - personal.y) <= ALTAR_RADIUS_METERS;
+}
+
+function isPointInsideGuildAltar(x, y) {
+  const { guild } = getSelectedAltarEntries();
+  if (!guild) {
+    return false;
+  }
+
+  return Math.hypot(x - guild.x, y - guild.y) <= ALTAR_RADIUS_METERS;
+}
+
+function isPointInsideBothAltars(x, y) {
+  const { personal, guild } = getSelectedAltarEntries();
+  if (!personal || !guild) {
+    return false;
+  }
+
+  return Math.hypot(x - personal.x, y - personal.y) <= ALTAR_RADIUS_METERS
+    && Math.hypot(x - guild.x, y - guild.y) <= ALTAR_RADIUS_METERS;
+}
+
+function isAltarIntersectionFilterActive() {
+  return altarsVisible && Boolean(selectedPersonalAltarId && selectedGuildAltarId);
+}
+
+function matchesRouteAltarConstraint(x, y, constraintMode) {
+  if (constraintMode === 'personal') {
+    return isPointInsidePersonalAltar(x, y);
+  }
+  if (constraintMode === 'guild') {
+    return isPointInsideGuildAltar(x, y);
+  }
+  if (constraintMode === 'both') {
+    return isPointInsideBothAltars(x, y);
+  }
+  return true;
+}
+
+function getRouteAltarConstraintModeFromInputs() {
+  if (routeRequireBothAltarsInput?.checked) {
+    return 'both';
+  }
+  if (routeRequireGuildAltarInput?.checked) {
+    return 'guild';
+  }
+  if (routeRequirePersonalAltarInput?.checked) {
+    return 'personal';
+  }
+  return 'none';
+}
+
+function applyRouteAltarConstraintSelection(mode) {
+  if (routeRequirePersonalAltarInput) {
+    routeRequirePersonalAltarInput.checked = mode === 'personal';
+  }
+  if (routeRequireGuildAltarInput) {
+    routeRequireGuildAltarInput.checked = mode === 'guild';
+  }
+  if (routeRequireBothAltarsInput) {
+    routeRequireBothAltarsInput.checked = mode === 'both';
+  }
 }
 
 function isMarkerOnCooldown(markerId, now = Date.now()) {
@@ -699,6 +826,20 @@ function getActiveCategoryKeys(group) {
     .filter((key) => activeOreFilters.has(key));
 }
 
+function getCategoryFilterCounts(group) {
+  const markerTotal = group.markers.length;
+  const markerActive = getActiveCategoryKeys(group).length;
+
+  if (group.category !== 'standart') {
+    return { active: markerActive, total: markerTotal };
+  }
+
+  return {
+    active: markerActive + (altarsVisible ? 1 : 0),
+    total: markerTotal + 1,
+  };
+}
+
 function createCategoryButton(group, options = {}) {
   const { compact = false } = options;
   const categoryButton = document.createElement('button');
@@ -707,14 +848,14 @@ function createCategoryButton(group, options = {}) {
   categoryButton.dataset.category = group.category;
   categoryButton.dataset.selected = openLegendCategory === group.category ? 'true' : 'false';
   const iconPath = CATEGORY_ICONS[group.category];
-  const activeCount = getActiveCategoryKeys(group).length;
+  const { active: activeCount, total: totalCount } = getCategoryFilterCounts(group);
   categoryButton.dataset.active = activeCount > 0 ? 'true' : 'false';
 
   if (compact) {
-    categoryButton.setAttribute('aria-label', `${group.label} ${activeCount}/${group.markers.length}`);
+    categoryButton.setAttribute('aria-label', `${group.label} ${activeCount}/${totalCount}`);
     categoryButton.innerHTML = `${iconPath ? `<img class="marker-only-filter-icon" src="${iconPath}" alt="">` : ''}`;
   } else {
-    categoryButton.innerHTML = `${iconPath ? `<img class="legend-category-icon" src="${iconPath}" alt="">` : ''}<span class="legend-category-label">${group.label}</span><span class="legend-category-count">${activeCount}/${group.markers.length}</span>`;
+    categoryButton.innerHTML = `${iconPath ? `<img class="legend-category-icon" src="${iconPath}" alt="">` : ''}<span class="legend-category-label">${group.label}</span><span class="legend-category-count">${activeCount}/${totalCount}</span>`;
   }
 
   categoryButton.addEventListener('mouseenter', () => {
@@ -1083,6 +1224,13 @@ function updateRoutePlannerButtonState() {
   }
 }
 
+function updateAltarTrackerButtonState() {
+  if (altarTrackerButton) {
+    altarTrackerButton.dataset.active = altarTrackingEnabled ? 'true' : 'false';
+    altarTrackerButton.dataset.filterActive = altarsVisible ? 'true' : 'false';
+  }
+}
+
 function saveNearestMarkerState(enabled) {
   nearestMarkerEnabled = enabled;
   saveUiSettings({
@@ -1267,6 +1415,7 @@ function syncRoutePlannerConfigFromInputs() {
   if (routeUsePlayerStartInput) {
     config.usePlayerStart = routeUsePlayerStartInput.checked;
   }
+  config.altarConstraintMode = getRouteAltarConstraintModeFromInputs();
 
   if (routeMarkerList) {
     for (const input of routeMarkerList.querySelectorAll('input[data-marker-key]')) {
@@ -1298,6 +1447,7 @@ function getDefaultRoutePlannerConfig() {
 
   return {
     usePlayerStart: true,
+    altarConstraintMode: 'none',
     markerConfig,
   };
 }
@@ -1399,6 +1549,16 @@ function getRouteStartPoint(config) {
 }
 
 function buildRoutePointPool(config, variantIndex) {
+  if (config.altarConstraintMode === 'both' && !isAltarIntersectionFilterActive()) {
+    return { startPoint: getRouteStartPoint(config), pool: [] };
+  }
+  if (config.altarConstraintMode === 'personal' && !selectedPersonalAltarId) {
+    return { startPoint: getRouteStartPoint(config), pool: [] };
+  }
+  if (config.altarConstraintMode === 'guild' && !selectedGuildAltarId) {
+    return { startPoint: getRouteStartPoint(config), pool: [] };
+  }
+
   const startPoint = getRouteStartPoint(config);
   const pool = [];
 
@@ -1414,6 +1574,7 @@ function buildRoutePointPool(config, variantIndex) {
         y,
         distanceToStart: Math.hypot(x - startPoint.x, y - startPoint.y),
       }))
+      .filter((point) => matchesRouteAltarConstraint(point.x, point.y, config.altarConstraintMode))
       .filter((point) => !isMarkerOnCooldown(point.id))
       .sort((left, right) => left.distanceToStart - right.distanceToStart);
 
@@ -1421,13 +1582,33 @@ function buildRoutePointPool(config, variantIndex) {
       continue;
     }
 
-    const desiredCount = Math.min(sortedPoints.length, requiredCount);
-    const offset = Math.min(variantIndex, Math.max(0, sortedPoints.length - desiredCount));
-    const slice = sortedPoints.slice(offset, offset + desiredCount);
-    pool.push(...slice);
+    pool.push(...selectRouteCandidates(sortedPoints, requiredCount, variantIndex));
   }
 
   return { startPoint, pool };
+}
+
+function selectRouteCandidates(sortedPoints, requiredCount, variantIndex) {
+  const minimumCount = Math.min(sortedPoints.length, requiredCount);
+  if (!minimumCount) {
+    return [];
+  }
+
+  const cutoffDistance = sortedPoints[minimumCount - 1].distanceToStart;
+  const nearbyWindow = Math.max(350, cutoffDistance * 0.18);
+  const maxCount = Math.min(
+    sortedPoints.length,
+    minimumCount + Math.max(2, Math.min(6, Math.ceil(requiredCount * 0.75))),
+  );
+
+  const candidateWindow = sortedPoints.filter((point, index) => (
+    index < minimumCount || point.distanceToStart <= cutoffDistance + nearbyWindow
+  ));
+
+  const takeCount = Math.min(maxCount, candidateWindow.length);
+  const maxOffset = Math.max(0, candidateWindow.length - takeCount);
+  const offset = Math.min(variantIndex, maxOffset);
+  return candidateWindow.slice(offset, offset + takeCount);
 }
 
 function buildRouteFromPool(startPoint, points, variantIndex) {
@@ -1640,6 +1821,7 @@ async function openRoutePlannerOverlay(prefillActive = false) {
   if (routeUsePlayerStartInput) {
     routeUsePlayerStartInput.checked = Boolean(config.usePlayerStart);
   }
+  applyRouteAltarConstraintSelection(config.altarConstraintMode || 'none');
   renderRouteMarkerList();
   renderRouteResults();
   resetRoutePlannerPanelPosition();
@@ -2033,6 +2215,8 @@ function showMarkerLayer(markerKey, layer) {
   if (!map.hasLayer(layer)) {
     layer.addTo(map);
   }
+
+  refreshClusteredBuildAreaVisibility();
 
   requestAnimationFrame(() => {
     pane.style.opacity = '1';
@@ -2502,6 +2686,7 @@ function saveCurrentViewSettings(patch) {
 function saveSharedFilterState() {
   const filterPatch = {
     activeOreFilters: Array.from(activeOreFilters),
+    altarFilterEnabled: altarsVisible,
     lastActiveFiltersByCategory: categoryFilterMemory,
   };
 
@@ -2515,6 +2700,38 @@ function saveSharedFilterState() {
       ...filterPatch,
     },
   });
+}
+
+function saveSelectedAltarsState() {
+  const personal = selectedPersonalAltarId ? altarEntries.get(selectedPersonalAltarId) : null;
+  const guild = selectedGuildAltarId ? altarEntries.get(selectedGuildAltarId) : null;
+  saveUiSettings({
+    selectedAltars: {
+      personal: personal ? { ...personal } : null,
+      guild: guild ? { ...guild } : null,
+    },
+  });
+}
+
+function syncAltarLayerVisibility() {
+  if (!map || !altarLayer) {
+    return;
+  }
+
+  const hasSelectedAltars = Boolean(selectedPersonalAltarId || selectedGuildAltarId);
+  const shouldShow = altarsVisible && (altarTrackingEnabled || hasSelectedAltars);
+
+  if (shouldShow && !map.hasLayer(altarLayer)) {
+    altarLayer.addTo(map);
+  }
+
+  if (!shouldShow && map.hasLayer(altarLayer)) {
+    map.removeLayer(altarLayer);
+  }
+
+  if (shouldShow) {
+    renderSelectedAltarsOnMap();
+  }
 }
 
 async function applyCurrentViewSettings() {
@@ -2541,6 +2758,16 @@ async function applyCurrentViewSettings() {
   activeOreFilters = new Set(
     viewSettings.activeOreFilters?.length ? viewSettings.activeOreFilters : getMarkerEntries().map((marker) => marker.key),
   );
+  altarTrackingEnabled = Boolean(uiSettings?.altarTrackingEnabled);
+  altarsVisible = viewSettings.altarFilterEnabled !== false;
+  selectedPersonalAltarId = uiSettings?.selectedAltars?.personal?.id || null;
+  selectedGuildAltarId = uiSettings?.selectedAltars?.guild?.id || null;
+  if (uiSettings?.selectedAltars?.personal?.id) {
+    altarEntries.set(uiSettings.selectedAltars.personal.id, { ...uiSettings.selectedAltars.personal });
+  }
+  if (uiSettings?.selectedAltars?.guild?.id) {
+    altarEntries.set(uiSettings.selectedAltars.guild.id, { ...uiSettings.selectedAltars.guild });
+  }
   nearestMarkerEnabled = getSharedNearestMarkerEnabled();
   categoryFilterMemory = { ...(viewSettings.lastActiveFiltersByCategory || {}) };
   if (activeRoute && routeFilterOverrideBackup) {
@@ -2549,7 +2776,9 @@ async function applyCurrentViewSettings() {
   openLegendCategory = null;
   renderLegend();
   syncOreLayers();
+  syncAltarLayerVisibility();
   scheduleMarkerOnlyCanvasDraw();
+  updateAltarTrackerButtonState();
   updateNearestMarkerButtonState();
   refreshNearestMarkerLine();
 
@@ -2573,6 +2802,47 @@ function gameToLatLng(x, z) {
 
 function oreToLatLng(x, y) {
   return gameToLatLng(x, y);
+}
+
+function getBuildAreaRadiusAtCurrentZoom() {
+  if (!map) {
+    return BUILD_AREA_RADIUS_PIXELS;
+  }
+
+  return BUILD_AREA_RADIUS_PIXELS * map.getZoomScale(map.getZoom(), 0);
+}
+
+function refreshBuildAreaCircles() {
+  const radius = getBuildAreaRadiusAtCurrentZoom();
+
+  for (const entry of buildAreaCircles) {
+    entry.circle.setRadius(radius);
+  }
+
+  refreshClusteredBuildAreaVisibility();
+}
+
+function refreshClusteredBuildAreaVisibility() {
+  for (const entry of buildAreaCircles) {
+    if (!entry.hideWhenClustered) {
+      continue;
+    }
+
+    const clusterLayerVisible = entry.layer.hasLayer(entry.clusterLayer);
+    const visibleParent = clusterLayerVisible
+      ? entry.clusterLayer.getVisibleParent(entry.leafletMarker)
+      : entry.leafletMarker;
+    const shouldHide = visibleParent !== entry.leafletMarker;
+    const isVisible = entry.layer.hasLayer(entry.circle);
+
+    if (shouldHide && isVisible) {
+      entry.layer.removeLayer(entry.circle);
+    }
+
+    if (!shouldHide && !isVisible) {
+      entry.layer.addLayer(entry.circle);
+    }
+  }
 }
 
 function playerToLatLng(x, y) {
@@ -2639,6 +2909,288 @@ function initMap() {
   addTileOverlays();
   map.fitBounds(bounds);
   map.setMaxBounds(bounds);
+  altarLayer = L.layerGroup().addTo(map);
+  map.on('zoomend', refreshBuildAreaCircles);
+  map.on('zoomend', refreshSelectedAltarCircles);
+  map.on('moveend', refreshClusteredBuildAreaVisibility);
+}
+
+function getAltarRadiusAtCurrentZoom() {
+  if (!map) {
+    return ALTAR_RADIUS_PIXELS;
+  }
+
+  return ALTAR_RADIUS_PIXELS * map.getZoomScale(map.getZoom(), 0);
+}
+
+function createAltarMarkerIcon(kind) {
+  const iconPath = kind === 'guild' ? GUILD_ALTAR_ICON_PATH : PERSONAL_ALTAR_ICON_PATH;
+  return L.divIcon({
+    className: 'altar-marker-wrap',
+    html: `
+      <div style="width:32px;height:32px;display:grid;place-items:center;">
+        <img src="${iconPath}" alt="" style="width:32px;height:32px;object-fit:contain;filter:drop-shadow(0 10px 16px rgba(0,0,0,0.34));">
+      </div>
+    `,
+    iconSize: [32, 32],
+    iconAnchor: [16, 16],
+    popupAnchor: [0, -10],
+  });
+}
+
+function clearAltarMarkers() {
+  if (altarLayer) {
+    altarLayer.clearLayers();
+  }
+  altarMarkers = new Map();
+}
+
+function createAltarFilterIconHtml() {
+  return `
+    <span class="legend-icon-wrap">
+      <img class="legend-item-icon" src="${PERSONAL_ALTAR_ICON_PATH}" alt="">
+    </span>
+  `;
+}
+
+function createAltarSummaryLabelHtml(kind) {
+  const iconPath = kind === 'guild' ? GUILD_ALTAR_ICON_PATH : PERSONAL_ALTAR_ICON_PATH;
+  return `
+    <span class="altar-summary-label">
+      <img src="${iconPath}" alt="">
+    </span>
+  `;
+}
+
+function buildAltarPopup(entry, kind) {
+  const title = kind === 'guild' ? 'Gildenaltar' : 'Persönlicher Altar';
+  return `
+    <div class="map-popup">
+      <div class="map-popup-title">${title}</div>
+      <div class="map-popup-row"><span>Name</span><strong>${entry.name}</strong></div>
+      <div class="map-popup-row"><span>X</span><strong>${entry.x.toFixed(2)}</strong></div>
+      <div class="map-popup-row"><span>Y</span><strong>${entry.y.toFixed(2)}</strong></div>
+    </div>
+  `;
+}
+
+function renderSelectedAltarsOnMap() {
+  clearAltarMarkers();
+
+  if (!map || !altarLayer || !altarsVisible) {
+    return;
+  }
+
+  const selections = [
+    { id: selectedPersonalAltarId, kind: 'personal', color: '#3b82f6', fillOpacity: 0.12 },
+    { id: selectedGuildAltarId, kind: 'guild', color: '#a855f7', fillOpacity: 0.12 },
+  ];
+
+  for (const selection of selections) {
+    const entry = selection.id ? altarEntries.get(selection.id) : null;
+    if (!entry) {
+      continue;
+    }
+
+    const latLng = oreToLatLng(entry.x, entry.y);
+    const popup = buildAltarPopup(entry, selection.kind);
+    const circle = L.circleMarker(latLng, {
+      radius: getAltarRadiusAtCurrentZoom(),
+      color: selection.color,
+      weight: 1.5,
+      fillColor: selection.color,
+      fillOpacity: selection.fillOpacity,
+      renderer: L.canvas({ padding: 0.4 }),
+    }).bindPopup(popup, { autoPan: true, className: 'map-popup-shell' });
+    const marker = L.marker(latLng, {
+      icon: createAltarMarkerIcon(selection.kind),
+      keyboard: false,
+    }).bindPopup(popup, { autoPan: true, className: 'map-popup-shell' });
+
+    circle.addTo(altarLayer);
+    marker.addTo(altarLayer);
+    altarMarkers.set(selection.kind, { marker, circle });
+  }
+}
+
+function refreshSelectedAltarCircles() {
+  const radius = getAltarRadiusAtCurrentZoom();
+  for (const entry of altarMarkers.values()) {
+    entry.circle?.setRadius(radius);
+  }
+}
+
+function setSelectedAltar(kind, altarId) {
+  if (kind === 'guild') {
+    selectedGuildAltarId = altarId;
+  } else {
+    selectedPersonalAltarId = altarId;
+  }
+
+  renderAltarSelectionSummary();
+  renderAltarResults();
+  renderSelectedAltarsOnMap();
+  saveSelectedAltarsState();
+}
+
+function pruneAltarEntriesToSelections() {
+  const preservedIds = new Set(
+    [selectedPersonalAltarId, selectedGuildAltarId].filter(Boolean),
+  );
+
+  altarEntries = new Map(
+    Array.from(altarEntries.entries()).filter(([id]) => preservedIds.has(id)),
+  );
+}
+
+function clearSelectedAltars() {
+  selectedPersonalAltarId = null;
+  selectedGuildAltarId = null;
+  pruneAltarEntriesToSelections();
+  renderAltarSelectionSummary();
+  renderAltarResults();
+  renderSelectedAltarsOnMap();
+  syncAltarLayerVisibility();
+  saveSelectedAltarsState();
+}
+
+function matchesAltarSearch(entry, query) {
+  if (!query) {
+    return true;
+  }
+
+  const haystack = `${entry.name} ${entry.x} ${entry.y}`.toLowerCase();
+  return haystack.includes(query);
+}
+
+function getFilteredAltars() {
+  const query = altarSearchQuery.trim().toLowerCase();
+  return Array.from(altarEntries.values())
+    .filter((entry) => matchesAltarSearch(entry, query))
+    .sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function renderAltarSelectionSummary() {
+  if (!altarSelectionSummary) {
+    return;
+  }
+
+  const personal = selectedPersonalAltarId ? altarEntries.get(selectedPersonalAltarId) : null;
+  const guild = selectedGuildAltarId ? altarEntries.get(selectedGuildAltarId) : null;
+  altarSelectionSummary.innerHTML = `
+    <div class="altar-summary-card">
+      <strong>${personal ? `${createAltarSummaryLabelHtml('personal')}<span>${personal.name}</span>` : `${createAltarSummaryLabelHtml('personal')}<span>Nicht gesetzt</span>`}</strong>
+    </div>
+    <div class="altar-summary-card">
+      <strong>${guild ? `${createAltarSummaryLabelHtml('guild')}<span>${guild.name}</span>` : `${createAltarSummaryLabelHtml('guild')}<span>Nicht gesetzt</span>`}</strong>
+    </div>
+  `;
+}
+
+function renderAltarResults() {
+  if (!altarResultsList || !altarResultsMeta) {
+    return;
+  }
+
+  const entries = getFilteredAltars();
+  altarResultsMeta.textContent = `${entries.length} Einträge`;
+  altarResultsList.innerHTML = '';
+
+  if (!entries.length) {
+    altarResultsList.innerHTML = '<div class="planner-empty">Keine Altäre gefunden.</div>';
+    return;
+  }
+
+  for (const entry of entries) {
+    const card = document.createElement('article');
+    card.className = 'altar-result-card';
+    card.innerHTML = `
+      <div class="altar-result-head">
+        <strong>${entry.name}</strong>
+      </div>
+      <div class="altar-result-actions">
+        <button class="altar-action-button altar-action-button-personal" data-kind="personal" data-altar-id="${entry.id}" type="button" aria-label="Persönlichen Altar setzen">
+          <img src="${PERSONAL_ALTAR_ICON_PATH}" alt="Persönlicher Altar">
+        </button>
+        <button class="altar-action-button altar-action-button-guild" data-kind="guild" data-altar-id="${entry.id}" type="button" aria-label="Gildenaltar setzen">
+          <img src="${GUILD_ALTAR_ICON_PATH}" alt="Gildenaltar">
+        </button>
+        <button class="altar-action-button altar-action-button-center" data-kind="center" data-altar-id="${entry.id}" type="button" aria-label="Auf Altar zentrieren">
+          <img src="${CENTER_ICON_PATH}" alt="Zentrieren">
+        </button>
+      </div>
+    `;
+    altarResultsList.appendChild(card);
+  }
+}
+
+function openAltarOverlay() {
+  if (altarOverlay) {
+    altarOverlay.hidden = false;
+  }
+  renderAltarSelectionSummary();
+  renderAltarResults();
+}
+
+async function closeAltarOverlay() {
+  if (altarOverlay) {
+    altarOverlay.hidden = true;
+  }
+
+  altarSearchQuery = '';
+  if (altarSearchInput) {
+    altarSearchInput.value = '';
+  }
+  pruneAltarEntriesToSelections();
+  renderAltarSelectionSummary();
+  renderAltarResults();
+
+  if (altarTrackingEnabled) {
+    uiSettings = await window.livemapApi.setAltarTracking(false);
+    altarTrackingEnabled = Boolean(uiSettings?.altarTrackingEnabled);
+    updateAltarTrackerButtonState();
+  }
+
+  syncAltarLayerVisibility();
+}
+
+function upsertAltarEntry(data) {
+  const x = Number(data?.x);
+  const y = Number(data?.y);
+  const id = String(data?.id || `${data?.name || 'altar'}:${x}:${y}`);
+  const name = String(data?.name || 'Unbekannter Altar').trim();
+
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !id) {
+    return;
+  }
+
+  altarEntries.set(id, { id, name, x, y });
+  renderAltarResults();
+  renderAltarSelectionSummary();
+  renderSelectedAltarsOnMap();
+}
+
+function centerMapOnAltarEntry(altarId) {
+  const entry = altarEntries.get(altarId);
+  if (!entry || !map) {
+    return;
+  }
+
+  map.flyTo(oreToLatLng(entry.x, entry.y), Math.max(map.getZoom(), 1.8), {
+    animate: true,
+    duration: 0.6,
+  });
+}
+
+async function openAltarSelector() {
+  if (!altarTrackingEnabled) {
+    uiSettings = await window.livemapApi.setAltarTracking(true);
+    altarTrackingEnabled = Boolean(uiSettings?.altarTrackingEnabled);
+  }
+
+  syncAltarLayerVisibility();
+  updateAltarTrackerButtonState();
+  openAltarOverlay();
 }
 
 function buildOreLayers() {
@@ -2648,13 +3200,14 @@ function buildOreLayers() {
   markerEntriesById = new Map();
   markerLeafletMarkers = new Map();
   markerDwellStarts = new Map();
+  buildAreaCircles = [];
   const canvasRenderer = L.canvas({ padding: 0.4 });
 
   for (const marker of getMarkerEntries()) {
     const color = getMarkerColor(marker);
     const paneName = getMarkerPaneName(marker.key);
     ensureMarkerPane(marker.key);
-    const layer = L.markerClusterGroup({
+    const clusterLayer = L.markerClusterGroup({
       showCoverageOnHover: false,
       spiderfyOnMaxZoom: true,
       removeOutsideVisibleBounds: true,
@@ -2674,7 +3227,9 @@ function buildOreLayers() {
         });
         },
       });
+    const layer = L.layerGroup();
     const markerOnlyLayer = L.layerGroup();
+    const buildAreaStyle = BUILD_AREA_STYLES[marker.key];
 
     marker.coordinates.forEach(([x, y], index) => {
       const markerId = getMarkerCoordinateId(marker.key, index);
@@ -2706,8 +3261,29 @@ function buildOreLayers() {
           popup,
           { autoPan: true, className: 'map-popup-shell' }
         )
-        .addTo(layer);
+        .addTo(clusterLayer);
       markerLeafletMarkers.set(markerId, { leafletMarker, marker, color });
+
+      if (buildAreaStyle) {
+        const buildAreaCircle = L.circleMarker(latLng, {
+          pane: paneName,
+          radius: getBuildAreaRadiusAtCurrentZoom(),
+          color: buildAreaStyle.color,
+          weight: 1.5,
+          fillColor: buildAreaStyle.fillColor,
+          fillOpacity: buildAreaStyle.fillOpacity,
+          renderer: canvasRenderer,
+        })
+          .bindPopup(popup, { autoPan: true, className: 'map-popup-shell' })
+          .addTo(layer);
+        buildAreaCircles.push({
+          circle: buildAreaCircle,
+          clusterLayer,
+          hideWhenClustered: CLUSTER_HIDDEN_BUILD_AREA_KEYS.has(marker.key),
+          layer,
+          leafletMarker,
+        });
+      }
 
       L.circleMarker(latLng, {
         pane: paneName,
@@ -2722,9 +3298,16 @@ function buildOreLayers() {
         .addTo(markerOnlyLayer);
     });
 
+    layer.addLayer(clusterLayer);
+    clusterLayer.on('animationend', refreshClusteredBuildAreaVisibility);
+    clusterLayer.on('spiderfied', refreshClusteredBuildAreaVisibility);
+    clusterLayer.on('unspiderfied', refreshClusteredBuildAreaVisibility);
+
     oreLayers.set(marker.key, layer);
     markerOnlyOreLayers.set(marker.key, markerOnlyLayer);
   }
+
+  refreshBuildAreaCircles();
 }
 
 function syncOreLayers() {
@@ -2857,6 +3440,28 @@ function renderLegend() {
       saveFilterState();
     });
     itemsBody.appendChild(button);
+  }
+
+  if (activeGroup.category === 'standart') {
+    const altarButton = document.createElement('button');
+    altarButton.type = 'button';
+    altarButton.className = 'legend-item';
+    altarButton.dataset.ore = 'altars';
+    altarButton.dataset.active = altarsVisible ? 'true' : 'false';
+    altarButton.innerHTML = `${createAltarFilterIconHtml()}<span class="legend-item-label">Altäre</span>`;
+    altarButton.addEventListener('click', (event) => {
+      event.stopPropagation();
+      if (activeRoute) {
+        return;
+      }
+
+      altarsVisible = !altarsVisible;
+      syncAltarLayerVisibility();
+      updateAltarTrackerButtonState();
+      renderLegend();
+      saveFilterState();
+    });
+    itemsBody.appendChild(altarButton);
   }
 
   items.appendChild(itemsBody);
@@ -3534,6 +4139,10 @@ async function bootstrap() {
       updatePlayerMarker(data);
     });
 
+    window.livemapApi.onAltarPosition((data) => {
+      upsertAltarEntry(data);
+    });
+
       window.livemapApi.onPlayerError((message) => {
         stopPlayerMarkerAnimation();
         stopMarkerOnlyAnimation();
@@ -3555,6 +4164,10 @@ async function bootstrap() {
     });
 
     window.livemapApi.onInventoryError((message) => {
+      console.error(message);
+    });
+
+    window.livemapApi.onAltarError((message) => {
       console.error(message);
     });
 
@@ -3580,6 +4193,59 @@ async function bootstrap() {
     if (routePlannerButton) {
       routePlannerButton.addEventListener('click', () => {
         window.livemapApi.openRoutePlanner();
+      });
+    }
+
+    if (altarTrackerButton) {
+      altarTrackerButton.addEventListener('click', () => {
+        void openAltarSelector();
+      });
+    }
+
+    if (altarBackdrop) {
+      altarBackdrop.addEventListener('click', () => {
+        void closeAltarOverlay();
+      });
+    }
+
+    if (altarCloseButton) {
+      altarCloseButton.addEventListener('click', () => {
+        void closeAltarOverlay();
+      });
+    }
+
+    if (altarSearchInput) {
+      altarSearchInput.addEventListener('input', (event) => {
+        altarSearchQuery = event.target.value || '';
+        renderAltarResults();
+      });
+    }
+
+    if (altarResultsList) {
+      altarResultsList.addEventListener('click', (event) => {
+        const button = event.target.closest('button[data-kind][data-altar-id]');
+        if (!button) {
+          return;
+        }
+
+        const kind = button.dataset.kind;
+        const altarId = button.dataset.altarId;
+        if (!altarId) {
+          return;
+        }
+
+        if (kind === 'center') {
+          centerMapOnAltarEntry(altarId);
+          return;
+        }
+
+        setSelectedAltar(kind, altarId);
+      });
+    }
+
+    if (altarClearSelectionButton) {
+      altarClearSelectionButton.addEventListener('click', () => {
+        clearSelectedAltars();
       });
     }
 
@@ -3663,6 +4329,30 @@ async function bootstrap() {
 
     if (routeMarkerList) {
       routeMarkerList.addEventListener('change', () => {
+        syncRoutePlannerConfigFromInputs();
+      });
+    }
+
+    if (routeUsePlayerStartInput) {
+      routeUsePlayerStartInput.addEventListener('change', () => {
+        syncRoutePlannerConfigFromInputs();
+      });
+    }
+
+    const routeAltarConstraintInputs = [
+      routeRequirePersonalAltarInput,
+      routeRequireGuildAltarInput,
+      routeRequireBothAltarsInput,
+    ].filter(Boolean);
+    for (const input of routeAltarConstraintInputs) {
+      input.addEventListener('change', (event) => {
+        if (event.target.checked) {
+          applyRouteAltarConstraintSelection(event.target.id === 'routeRequireBothAltars'
+            ? 'both'
+            : event.target.id === 'routeRequireGuildAltar'
+              ? 'guild'
+              : 'personal');
+        }
         syncRoutePlannerConfigFromInputs();
       });
     }

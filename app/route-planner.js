@@ -1,5 +1,8 @@
 const routePlannerCloseButton = document.getElementById('routePlannerCloseButton');
 const routeUsePlayerStartInput = document.getElementById('routeUsePlayerStart');
+const routeRequirePersonalAltarInput = document.getElementById('routeRequirePersonalAltar');
+const routeRequireGuildAltarInput = document.getElementById('routeRequireGuildAltar');
+const routeRequireBothAltarsInput = document.getElementById('routeRequireBothAltars');
 const routeGenerateButton = document.getElementById('routeGenerateButton');
 const routeMarkerList = document.getElementById('routeMarkerList');
 const routeResultsList = document.getElementById('routeResultsList');
@@ -56,6 +59,7 @@ function getDefaultRoutePlannerConfig() {
 
   return {
     usePlayerStart: true,
+    altarConstraintMode: 'none',
     markerConfig,
   };
 }
@@ -94,7 +98,62 @@ function syncRoutePlannerConfigFromInputs() {
   if (routeUsePlayerStartInput) {
     config.usePlayerStart = routeUsePlayerStartInput.checked;
   }
+  config.altarConstraintMode = getRouteAltarConstraintModeFromInputs();
   saveRoutePlannerConfig();
+}
+
+function getSelectedAltars() {
+  return {
+    personal: uiSettings?.selectedAltars?.personal || null,
+    guild: uiSettings?.selectedAltars?.guild || null,
+  };
+}
+
+function isPointInsideAltar(point, altar) {
+  if (!altar) {
+    return false;
+  }
+
+  return Math.hypot(point.x - altar.x, point.y - altar.y) <= 5000;
+}
+
+function matchesRouteAltarConstraint(point, mode) {
+  const { personal, guild } = getSelectedAltars();
+  if (mode === 'personal') {
+    return isPointInsideAltar(point, personal);
+  }
+  if (mode === 'guild') {
+    return isPointInsideAltar(point, guild);
+  }
+  if (mode === 'both') {
+    return isPointInsideAltar(point, personal) && isPointInsideAltar(point, guild);
+  }
+  return true;
+}
+
+function getRouteAltarConstraintModeFromInputs() {
+  if (routeRequireBothAltarsInput?.checked) {
+    return 'both';
+  }
+  if (routeRequireGuildAltarInput?.checked) {
+    return 'guild';
+  }
+  if (routeRequirePersonalAltarInput?.checked) {
+    return 'personal';
+  }
+  return 'none';
+}
+
+function applyRouteAltarConstraintSelection(mode) {
+  if (routeRequirePersonalAltarInput) {
+    routeRequirePersonalAltarInput.checked = mode === 'personal';
+  }
+  if (routeRequireGuildAltarInput) {
+    routeRequireGuildAltarInput.checked = mode === 'guild';
+  }
+  if (routeRequireBothAltarsInput) {
+    routeRequireBothAltarsInput.checked = mode === 'both';
+  }
 }
 
 function formatMarkerLabel(value) {
@@ -217,6 +276,16 @@ function buildRoutePointPool(config, variantIndex) {
   const startPoint = getRouteStartPoint(config);
   const pool = [];
 
+  if (config.altarConstraintMode === 'personal' && !getSelectedAltars().personal) {
+    return { startPoint, pool };
+  }
+  if (config.altarConstraintMode === 'guild' && !getSelectedAltars().guild) {
+    return { startPoint, pool };
+  }
+  if (config.altarConstraintMode === 'both' && !(getSelectedAltars().personal && getSelectedAltars().guild)) {
+    return { startPoint, pool };
+  }
+
   for (const { marker, config: markerConfig } of getSelectedRouteMarkerConfigs()) {
     const requiredCount = Math.max(1, Number(markerConfig.minCount) || 1);
     const sortedPoints = marker.coordinates
@@ -228,6 +297,7 @@ function buildRoutePointPool(config, variantIndex) {
         y,
         distanceToStart: Math.hypot(x - startPoint.x, y - startPoint.y),
       }))
+      .filter((point) => matchesRouteAltarConstraint(point, config.altarConstraintMode))
       .filter((point) => !isMarkerOnCooldown(point.id))
       .sort((left, right) => left.distanceToStart - right.distanceToStart);
 
@@ -235,12 +305,33 @@ function buildRoutePointPool(config, variantIndex) {
       continue;
     }
 
-    const desiredCount = Math.min(sortedPoints.length, requiredCount);
-    const offset = Math.min(variantIndex, Math.max(0, sortedPoints.length - desiredCount));
-    pool.push(...sortedPoints.slice(offset, offset + desiredCount));
+    pool.push(...selectRouteCandidates(sortedPoints, requiredCount, variantIndex));
   }
 
   return { startPoint, pool };
+}
+
+function selectRouteCandidates(sortedPoints, requiredCount, variantIndex) {
+  const minimumCount = Math.min(sortedPoints.length, requiredCount);
+  if (!minimumCount) {
+    return [];
+  }
+
+  const cutoffDistance = sortedPoints[minimumCount - 1].distanceToStart;
+  const nearbyWindow = Math.max(350, cutoffDistance * 0.18);
+  const maxCount = Math.min(
+    sortedPoints.length,
+    minimumCount + Math.max(2, Math.min(6, Math.ceil(requiredCount * 0.75))),
+  );
+
+  const candidateWindow = sortedPoints.filter((point, index) => (
+    index < minimumCount || point.distanceToStart <= cutoffDistance + nearbyWindow
+  ));
+
+  const takeCount = Math.min(maxCount, candidateWindow.length);
+  const maxOffset = Math.max(0, candidateWindow.length - takeCount);
+  const offset = Math.min(variantIndex, maxOffset);
+  return candidateWindow.slice(offset, offset + takeCount);
 }
 
 function createSeededRandom(seed) {
@@ -310,6 +401,53 @@ function buildRouteFromPool(startPoint, points, variantIndex, random) {
   return route;
 }
 
+function getPathDistance(startPoint, routePoints) {
+  let totalDistance = 0;
+  let current = startPoint;
+  for (const point of routePoints) {
+    totalDistance += Math.hypot(point.x - current.x, point.y - current.y);
+    current = point;
+  }
+  return totalDistance;
+}
+
+function optimizeRouteWithTwoOpt(startPoint, routePoints, maxPasses = 2) {
+  if (routePoints.length < 4) {
+    return routePoints;
+  }
+
+  const optimized = [...routePoints];
+  let improved = true;
+  let pass = 0;
+
+  while (improved && pass < maxPasses) {
+    improved = false;
+    pass += 1;
+
+    for (let i = 0; i < optimized.length - 2; i += 1) {
+      for (let k = i + 1; k < optimized.length - 1; k += 1) {
+        const beforeA = i === 0 ? startPoint : optimized[i - 1];
+        const a = optimized[i];
+        const b = optimized[k];
+        const afterB = optimized[k + 1];
+
+        const currentCost = Math.hypot(a.x - beforeA.x, a.y - beforeA.y)
+          + Math.hypot(afterB.x - b.x, afterB.y - b.y);
+        const swappedCost = Math.hypot(b.x - beforeA.x, b.y - beforeA.y)
+          + Math.hypot(afterB.x - a.x, afterB.y - a.y);
+
+        if (swappedCost + 0.001 < currentCost) {
+          const reversed = optimized.slice(i, k + 1).reverse();
+          optimized.splice(i, k - i + 1, ...reversed);
+          improved = true;
+        }
+      }
+    }
+  }
+
+  return optimized;
+}
+
 function calculateRouteMetrics(startPoint, routePoints) {
   if (!routePoints.length) {
     return {
@@ -338,7 +476,8 @@ function buildRouteVariant(variantIndex, simulationIndex = 0) {
   const flavorIndex = variantIndex % 7;
   const random = createSeededRandom((simulationIndex + 1) * 7919 + (variantIndex + 11) * 104729);
   const { startPoint, pool } = buildRoutePointPool(config, simulationIndex + flavorIndex);
-  const routePoints = buildRouteFromPool(startPoint, pool, flavorIndex, random);
+  const initialRoutePoints = buildRouteFromPool(startPoint, pool, flavorIndex, random);
+  const routePoints = optimizeRouteWithTwoOpt(startPoint, initialRoutePoints);
   const metrics = calculateRouteMetrics(startPoint, routePoints);
   return {
     id: `route-${simulationIndex + 1}-${variantIndex + 1}`,
@@ -605,6 +744,7 @@ async function init() {
   if (routeUsePlayerStartInput) {
     routeUsePlayerStartInput.checked = Boolean(getRoutePlannerConfig().usePlayerStart);
   }
+  applyRouteAltarConstraintSelection(getRoutePlannerConfig().altarConstraintMode || 'none');
   renderRouteMarkerList();
   renderResults();
 }
@@ -619,6 +759,27 @@ routeGenerateButton?.addEventListener('click', () => {
     renderRouteSuggestions();
   });
 });
+
+routeUsePlayerStartInput?.addEventListener('change', () => {
+  syncRoutePlannerConfigFromInputs();
+});
+
+[routeRequirePersonalAltarInput, routeRequireGuildAltarInput, routeRequireBothAltarsInput]
+  .filter(Boolean)
+  .forEach((input) => {
+    input.addEventListener('change', (event) => {
+      if (event.target.checked) {
+        applyRouteAltarConstraintSelection(
+          event.target.id === 'routeRequireBothAltars'
+            ? 'both'
+            : event.target.id === 'routeRequireGuildAltar'
+              ? 'guild'
+              : 'personal',
+        );
+      }
+      syncRoutePlannerConfigFromInputs();
+    });
+  });
 
 routeMarkerList?.addEventListener('change', (event) => {
   const input = event.target.closest('input[data-marker-key]');

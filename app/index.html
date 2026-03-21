@@ -93,6 +93,9 @@
           <div class="inventory-head"><span class="inventory-icon">⚖️</span><strong id="inventoryUsageTop">0%</strong></div>
           <div class="inventory-sub" id="inventoryUsage">Gewicht</div>
         </div>
+        <button class="player-center-button altar-tracker-button" id="altarTrackerButton" type="button" aria-label="Altäre laden">
+          <img src="marker/standart/altar.png" alt="">
+        </button>
         <button class="player-center-button route-planner-button" id="routePlannerButton" type="button" aria-label="Routenplaner">
           <img src="map/routenplaner.png" alt="">
         </button>
@@ -172,6 +175,27 @@
               <span>Spielerstandort berücksichtigen</span>
             </label>
           </div>
+          <div class="planner-setting-row planner-setting-row-global">
+            <label class="planner-toggle">
+              <input id="routeRequirePersonalAltar" type="checkbox">
+              <span>Persönlicher Altar</span>
+            </label>
+          </div>
+          <div class="planner-setting-row planner-setting-row-global">
+            <label class="planner-toggle">
+              <input id="routeRequireGuildAltar" type="checkbox">
+              <span>Gildenaltar</span>
+            </label>
+          </div>
+          <div class="planner-setting-row planner-setting-row-global">
+            <label class="planner-toggle">
+              <input id="routeRequireBothAltars" type="checkbox">
+              <span>Beide Altäre</span>
+            </label>
+          </div>
+          <div class="planner-setting-row planner-setting-row-global">
+            <span class="planner-setting-help">Es kann immer nur eine Altar-Einschränkung aktiv sein.</span>
+          </div>
           <div class="planner-section-head">
             <strong>Marker-Auswahl</strong>
             <span>Aktivieren und Mindestanzahl pro Typ festlegen</span>
@@ -188,6 +212,38 @@
             <span>Nach Effizienz sortiert</span>
           </div>
           <div class="planner-results-list" id="routeResultsList"></div>
+        </section>
+      </div>
+    </section>
+  </div>
+  <div class="planner-overlay" id="altarOverlay" hidden>
+    <div class="planner-backdrop" id="altarBackdrop"></div>
+    <section class="planner-panel altar-panel" aria-labelledby="altarTitle">
+      <header class="planner-header">
+        <div>
+          <p class="planner-eyebrow">Altäre</p>
+          <h2 id="altarTitle">Altar-Auswahl</h2>
+        </div>
+        <button class="planner-close" id="altarCloseButton" type="button" aria-label="Altar-Liste schließen">&#x274C;</button>
+      </header>
+      <div class="altar-content">
+        <section class="altar-sidebar">
+          <div class="planner-section-head">
+            <strong>Suche</strong>
+            <span>Nach Name oder Koordinaten filtern</span>
+          </div>
+          <input class="altar-search-input" id="altarSearchInput" type="search" placeholder="Name oder Koordinaten">
+          <div class="altar-summary-actions">
+            <button class="planner-danger" id="altarClearSelectionButton" type="button">Marker löschen</button>
+          </div>
+          <div class="altar-selection-summary" id="altarSelectionSummary"></div>
+        </section>
+        <section class="altar-results-panel">
+          <div class="planner-section-head">
+            <strong>Ergebnisse</strong>
+            <span id="altarResultsMeta">Warte auf Altäre...</span>
+          </div>
+          <div class="altar-results-list" id="altarResultsList"></div>
         </section>
       </div>
     </section>
