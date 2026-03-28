@@ -270,6 +270,14 @@ function loadOreData() {
 }
 
 function getPythonCommand() {
+  const venvPythonPath = process.platform === 'win32'
+    ? path.join(__dirname, '..', '.venv', 'Scripts', 'python.exe')
+    : path.join(__dirname, '..', '.venv', 'bin', 'python');
+
+  if (fs.existsSync(venvPythonPath)) {
+    return venvPythonPath;
+  }
+
   return process.platform === 'win32' ? 'python' : 'python3';
 }
 
