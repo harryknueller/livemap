@@ -7,9 +7,9 @@ const WORLD_BOSS_DEFINITIONS = [
   { id: 'titanseal-runebound', name: 'Titanseal Runebound', hour: 17, minute: 0, icon: 'map/bosstimer/titan.png' },
   { id: 'aero-forge-colossus', name: 'Aero-Forge Colossus', hour: 18, minute: 0, icon: 'map/bosstimer/aero-forge.png' },
   { id: 'ironscale-draconarch', name: 'Ironscale Draconarch', hour: 19, minute: 0, icon: 'map/bosstimer/ironscale.png' },
-  { id: 'doomcaller', name: 'Doomcaller', hour: 20, minute: 0, icon: 'map/bosstimer/doomcaller.png' },
-  { id: 'vel-khurath', name: "Vel'khurath", hour: 21, minute: 0, icon: 'map/bosstimer/velkhurath.png' },
-  { id: 'seraphiel', name: 'Seraphiel', hour: 22, minute: 0, icon: 'map/bosstimer/seraphiel.png' },
+  { id: 'doomcaller', name: 'Doomcaller', hour: 22, minute: 0, icon: 'map/bosstimer/doomcaller.png' },
+  { id: 'vel-khurath', name: "Vel'khurath", hour: 23, minute: 0, icon: 'map/bosstimer/velkhurath.png' },
+  { id: 'seraphiel', name: 'Seraphiel', hour: 0, minute: 0, icon: 'map/bosstimer/seraphiel.png' },
 ];
 
 const WORLD_BOSS_TIMER_CORRECTION_MS = 2000;
@@ -83,6 +83,38 @@ function saveTracker(tracker) {
   });
 }
 
+function clearBossAlert(bossId, { resetOffset = false } = {}) {
+  if (!bossId) {
+    return;
+  }
+
+  const tracker = getWorldBossTrackerSettings();
+  const currentBoss = tracker.bosses?.[bossId] || {};
+  const nextTracker = {
+    ...tracker,
+    bosses: {
+      ...(tracker.bosses || {}),
+      [bossId]: {
+        ...currentBoss,
+        alertOffsetMinutes: resetOffset ? null : currentBoss.alertOffsetMinutes,
+        activeAlertSignature: null,
+        lastAlertSignature: null,
+      },
+    },
+  };
+
+  if (activeAlarmBossId === bossId) {
+    activeAlarmBossId = null;
+  }
+  stopAlarmSound();
+  saveTracker(nextTracker);
+  renderWorldBossOverlay();
+  syncActiveAlarmPlayback({
+    ...(uiSettings || {}),
+    worldBossTracker: nextTracker,
+  });
+}
+
 function getActiveAlertBossId(nextSettings = uiSettings) {
   const tracker = nextSettings?.worldBossTracker || { bosses: {} };
   for (const boss of WORLD_BOSS_DEFINITIONS) {
@@ -128,8 +160,7 @@ function startAlarmSoundForBoss(bossId) {
   const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
   if (!AudioContextCtor) {
     alarmStopTimer = setTimeout(() => {
-      stopAlarmSound();
-      activeAlarmBossId = null;
+      clearBossAlert(bossId, { resetOffset: true });
     }, ALARM_SOUND_DURATION_MS);
     return;
   }
@@ -164,7 +195,7 @@ function startAlarmSoundForBoss(bossId) {
     stopAlarmSound();
   };
   alarmStopTimer = setTimeout(() => {
-    stopAlarmSound();
+    clearBossAlert(bossId, { resetOffset: true });
   }, ALARM_SOUND_DURATION_MS);
 }
 
@@ -339,12 +370,35 @@ function notifyForBoss(boss, minutesBefore) {
 
 function checkWorldBossAlerts() {
   const tracker = getWorldBossTrackerSettings();
+  let nextTracker = tracker;
+  let trackerChanged = false;
   const now = Date.now();
 
   for (const boss of WORLD_BOSS_DEFINITIONS) {
-    const state = tracker.bosses?.[boss.id] || {};
+    const state = nextTracker.bosses?.[boss.id] || {};
     const offsetMinutes = Number(state.alertOffsetMinutes);
     if (!Number.isFinite(offsetMinutes) || offsetMinutes <= 0) {
+      continue;
+    }
+
+    if (getWorldBossRemainingMs(boss) === 0) {
+      nextTracker = {
+        ...nextTracker,
+        bosses: {
+          ...(nextTracker.bosses || {}),
+          [boss.id]: {
+            ...state,
+            alertOffsetMinutes: null,
+            activeAlertSignature: null,
+            lastAlertSignature: null,
+          },
+        },
+      };
+      trackerChanged = true;
+      if (activeAlarmBossId === boss.id) {
+        activeAlarmBossId = null;
+        stopAlarmSound();
+      }
       continue;
     }
 
@@ -352,10 +406,10 @@ function checkWorldBossAlerts() {
     const triggerAt = nextSpawnAt.getTime() - (offsetMinutes * 60 * 1000);
     const signature = getWorldBossAlertSignature(boss, offsetMinutes);
     if (now >= triggerAt && state.lastAlertSignature !== signature) {
-      const nextTracker = {
-        ...tracker,
+      nextTracker = {
+        ...nextTracker,
         bosses: {
-          ...(tracker.bosses || {}),
+          ...(nextTracker.bosses || {}),
           [boss.id]: {
             ...state,
             activeAlertSignature: signature,
@@ -363,13 +417,18 @@ function checkWorldBossAlerts() {
           },
         },
       };
-      saveTracker(nextTracker);
+      trackerChanged = true;
       notifyForBoss(boss, offsetMinutes);
       syncActiveAlarmPlayback({
         ...(uiSettings || {}),
         worldBossTracker: nextTracker,
       });
     }
+  }
+
+  if (trackerChanged) {
+    saveTracker(nextTracker);
+    renderWorldBossOverlay();
   }
 }
 
@@ -584,19 +643,7 @@ detachedList?.addEventListener('click', (event) => {
   }
 
   event.preventDefault();
-  activeAlarmBossId = null;
-  stopAlarmSound();
-  saveTracker({
-    ...tracker,
-    bosses: {
-      ...(tracker.bosses || {}),
-      [bossId]: {
-        ...currentBoss,
-        activeAlertSignature: null,
-      },
-    },
-  });
-  renderWorldBossOverlay();
+  clearBossAlert(bossId, { resetOffset: true });
 });
 
 detachedList?.addEventListener('mouseenter', (event) => {
