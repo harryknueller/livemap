@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Altar-Auswahl</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="planner-window">
+  <main class="planner-window-shell">
+    <section class="planner-panel planner-panel-standalone altar-panel" aria-labelledby="altarTitle">
+      <header class="planner-header">
+        <div>
+          <p class="planner-eyebrow">Altäre</p>
+          <h2 id="altarTitle">Altar-Auswahl</h2>
+        </div>
+        <div class="planner-header-actions">
+          <button class="planner-close" id="altarCloseButton" type="button" aria-label="Altar-Auswahl schliessen">&#x274C;</button>
+        </div>
+      </header>
+      <div class="altar-content">
+        <section class="altar-sidebar">
+          <div class="planner-section-head">
+            <strong>Suche</strong>
+            <span>Nach Name suchen...</span>
+          </div>
+          <input class="altar-search-input" id="altarSearchInput" type="search" placeholder="Name oder Koordinaten">
+          <div class="altar-summary-actions">
+            <button class="planner-danger" id="altarClearSelectionButton" type="button">Altäre löschen</button>
+          </div>
+          <div class="altar-selection-summary" id="altarSelectionSummary"></div>
+          <div class="altar-placement-tools" id="altarPlacementTools">
+            <label class="planner-toggle altar-placement-toggle">
+              <input id="altarShowBlockedRadii" type="checkbox">
+              <span>Altäre anzeigen</span>
+            </label>
+            <label class="planner-toggle altar-placement-toggle">
+              <input id="altarShowBuildAreaSlots" type="checkbox">
+              <span>Freie Plätze für privater Altar</span>
+            </label>
+            <label class="planner-toggle altar-placement-toggle">
+              <input id="altarShowGuildBuildAreaSlots" type="checkbox">
+              <span>Freie Plätze für Gildenaltar</span>
+            </label>
+          </div>
+        </section>
+        <section class="altar-results-panel">
+          <div class="planner-section-head">
+            <strong>Ergebnisse</strong>
+            <span id="altarResultsMeta">Warte auf Altäre...</span>
+          </div>
+          <div class="altar-results-list" id="altarResultsList"></div>
+        </section>
+      </div>
+    </section>
+  </main>
+  <script src="altar-selector.js"></script>
+</body>
+</html>

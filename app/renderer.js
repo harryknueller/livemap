@@ -35,6 +35,17 @@ const CATEGORY_ORDER = {
   pflanzen: 2,
 };
 
+const WORLD_BOSS_DEFINITIONS = [
+  { id: 'titanseal-runebound', name: 'Titanseal Runebound', hour: 17, minute: 0, icon: 'map/bosstimer/titan.png' },
+  { id: 'aero-forge-colossus', name: 'Aero-Forge Colossus', hour: 18, minute: 0, icon: 'map/bosstimer/aero-forge.png' },
+  { id: 'ironscale-draconarch', name: 'Ironscale Draconarch', hour: 19, minute: 0, icon: 'map/bosstimer/ironscale.png' },
+  { id: 'doomcaller', name: 'Doomcaller', hour: 20, minute: 0, icon: 'map/bosstimer/doomcaller.png' },
+  { id: 'vel-khurath', name: "Vel'khurath", hour: 21, minute: 0, icon: 'map/bosstimer/velkhurath.png' },
+  { id: 'seraphiel', name: 'Seraphiel', hour: 22, minute: 0, icon: 'map/bosstimer/seraphiel.png' },
+];
+
+const WORLD_BOSS_TIMER_CORRECTION_MS = 2000;
+
 const legend = document.getElementById('legend');
 const legendOverlayRoot = document.getElementById('legendOverlayRoot');
 const channelStatusElement = document.getElementById('channelStatus');
@@ -51,9 +62,14 @@ const compactInventoryPanelElement = document.getElementById('compactInventoryPa
 const compactInventoryUsageTopElement = document.getElementById('compactInventoryUsageTop');
 const markerOnlyFiltersElement = document.getElementById('markerOnlyFilters');
 const markerOnlyCanvas = document.getElementById('markerOnlyCanvas');
+const mapViewportElement = document.querySelector('.map-viewport');
 const resizeHandles = document.getElementById('resizeHandles');
 const mapFrameButton = document.getElementById('mapFrameButton');
 const playerLockButton = document.getElementById('playerLockButton');
+const worldBossButton = document.getElementById('worldBossButton');
+const worldBossOverlay = document.getElementById('worldBossOverlay');
+const worldBossOverlayHeader = document.getElementById('worldBossOverlayHeader');
+const worldBossOverlayList = document.getElementById('worldBossOverlayList');
 const altarTrackerButton = document.getElementById('altarTrackerButton');
 const routePlannerButton = document.getElementById('routePlannerButton');
 const findNearestButton = document.getElementById('findNearestButton');
@@ -105,6 +121,31 @@ const startupUpdaterBarFill = document.getElementById('startupUpdaterBarFill');
 const startupUpdaterActions = document.getElementById('startupUpdaterActions');
 const startupUpdaterPatchButton = document.getElementById('startupUpdaterPatchButton');
 const startupUpdaterExitButton = document.getElementById('startupUpdaterExitButton');
+const authOverlay = document.getElementById('authOverlay');
+const authCloseButton = document.getElementById('authCloseButton');
+const authTitle = document.getElementById('authTitle');
+const authUser = document.getElementById('authUser');
+const authAvatar = document.getElementById('authAvatar');
+const authUserName = document.getElementById('authUserName');
+const authUserEmail = document.getElementById('authUserEmail');
+const authLoginButton = document.getElementById('authLoginButton');
+const authLogoutButton = document.getElementById('authLogoutButton');
+const authAutoLoginCheckbox = document.getElementById('authAutoLoginCheckbox');
+const mapAccount = document.getElementById('mapAccount');
+const mapAccountButton = document.getElementById('mapAccountButton');
+const mapAccountAvatar = document.getElementById('mapAccountAvatar');
+const mapAccountName = document.getElementById('mapAccountName');
+const mapAccountRole = document.getElementById('mapAccountRole');
+const mapAccountMenu = document.getElementById('mapAccountMenu');
+const mapAccountAdminButton = document.getElementById('mapAccountAdminButton');
+const mapAccountRefreshButton = document.getElementById('mapAccountRefreshButton');
+const mapAccountLogoutButton = document.getElementById('mapAccountLogoutButton');
+const adminOverlay = document.getElementById('adminOverlay');
+const adminProfilesList = document.getElementById('adminProfilesList');
+const adminStatusMessage = document.getElementById('adminStatusMessage');
+const adminSearchInput = document.getElementById('adminSearchInput');
+const adminRefreshButton = document.getElementById('adminRefreshButton');
+const adminCloseButton = document.getElementById('adminCloseButton');
 const tutorialOverlay = document.getElementById('tutorialOverlay');
 const tutorialTitle = document.getElementById('tutorialTitle');
 const tutorialStepLabel = document.getElementById('tutorialStepLabel');
@@ -133,6 +174,9 @@ const BUILD_AREA_RADIUS_METERS = 450;
 const BUILD_AREA_RADIUS_PIXELS = BUILD_AREA_RADIUS_METERS / ((METERS_PER_PIXEL_X + METERS_PER_PIXEL_Z) / 2);
 const ALTAR_RADIUS_METERS = 5000;
 const ALTAR_RADIUS_PIXELS = ALTAR_RADIUS_METERS / ((METERS_PER_PIXEL_X + METERS_PER_PIXEL_Z) / 2);
+const GUILD_ALTAR_BLOCK_RADIUS_METERS = 70;
+const PERSONAL_ALTAR_BLOCK_RADIUS_METERS = 40;
+const PRIVATE_ALTAR_SLOT_RADIUS_METERS = 40;
 const PERSONAL_ALTAR_ICON_PATH = 'marker/standart/altar.png';
 const GUILD_ALTAR_ICON_PATH = 'marker/standart/gildenaltar.png';
 const CENTER_ICON_PATH = 'map/playercenter.png';
@@ -153,6 +197,19 @@ const BUILD_AREA_STYLES = {
   },
 };
 
+const BUILD_AREA_FILTER_KEYS_LEGACY = new Set([
+  'standart/gefÃ¤hrlicher_bau',
+  'standart/sicherer_bau',
+]);
+
+const BUILD_AREA_FILTER_KEYS = new Set([
+  'standart/gefährlicher_bau',
+  'standart/gefährlicher_bau',
+  'standart/gefÃ¤hrlicher_bau',
+  'standart/gefÃƒÂ¤hrlicher_bau',
+  'standart/sicherer_bau',
+]);
+
 let map;
 let oreData = {};
 let playerPosition = null;
@@ -163,6 +220,16 @@ let tileOverlays = [];
 let playerMarker = null;
 let altarLayer = null;
 let altarMarkers = new Map();
+let altarPlacementRadiusCircles = [];
+let altarPlacementLiveMarkers = [];
+let altarPlacementCandidateMarkers = [];
+let altarPlacementCandidateRadiusCircles = [];
+let altarPlacementPatternMarkers = [];
+let altarFocusPingMarker = null;
+let altarFocusPingTimer = null;
+let altarOverlayTransitionTimer = null;
+let altarUiRenderTimer = null;
+let altarMapRenderTimer = null;
 let altarsVisible = true;
 let altarTrackingEnabled = false;
 let altarEntries = new Map();
@@ -200,6 +267,8 @@ let markerCooldownTimer = null;
 let currentChannelPort = null;
 let nearestMarkerLine = null;
 let nearestMarkerEnabled = false;
+let altarPlacementTarget = null;
+let altarMapRenderSignature = '';
 let playerPositionLockState = { active: false, signature: null };
 let routePlannerConfig = null;
 let routePlannerResults = [];
@@ -209,15 +278,43 @@ let routePreviewLine = null;
 let routeGuideLine = null;
 let routeFilterOverrideBackup = null;
 let routePlannerDragState = null;
+let worldBossOverlayTimer = null;
+let worldBossOverlayDragState = null;
 let routePlannerWindowBoundsBackup = null;
 let routePreviewPlaybackToken = 0;
 let confirmDialogResolver = null;
 let updaterState = null;
 let startupUpdaterResolved = false;
 let startupUpdaterStartedAt = 0;
+let startupGateFinished = false;
 let tutorialActive = false;
 let tutorialStepIndex = 0;
 let tutorialHighlightedElement = null;
+let currentAuthState = null;
+let appCoreInitialized = false;
+let livemapStarted = false;
+let livemapStartPending = false;
+let livemapStartTimer = null;
+let adminProfilesCache = [];
+let adminSearchQuery = '';
+let mapAccountMenuOpen = false;
+
+const ACCESS_ROLE_LABELS = {
+  public: 'Public',
+  prem: 'Prem',
+  guild: 'Guild',
+  beta: 'Beta',
+  admin: 'Admin',
+};
+
+const ACCESS_FEATURE_LABELS = {
+  findNearest: 'Find nearest',
+  routePlanner: 'Routenplaner',
+  altars: 'Altars',
+  worldBossTimer: 'Weltbosstimer',
+  mapMarkerOnly: 'Mapmarkeronly',
+  admin: 'Admin',
+};
 let tutorialRunningTransition = false;
 let tutorialRequiredAction = null;
 let buildAreaCircles = [];
@@ -816,6 +913,10 @@ function getCategoryGroups() {
     }));
 }
 
+function getVisibleCategoryGroups() {
+  return getCategoryGroups();
+}
+
 function getRoutePlannerCategoryGroups() {
   return getCategoryGroups().filter((group) => group.category !== 'standart');
 }
@@ -975,10 +1076,12 @@ function updateNearestMarkerButtonState() {
     return;
   }
 
+  findNearestButton.classList.toggle('feature-locked', !hasFeatureAccess('findNearest'));
   findNearestButton.dataset.active = nearestMarkerEnabled ? 'true' : 'false';
 
   const compactButton = markerOnlyFiltersElement?.querySelector('.marker-only-nearest-button');
   if (compactButton) {
+    compactButton.classList.toggle('feature-locked', !hasFeatureAccess('findNearest'));
     compactButton.dataset.active = nearestMarkerEnabled ? 'true' : 'false';
   }
 }
@@ -1231,6 +1334,13 @@ function updateAltarTrackerButtonState() {
   }
 }
 
+async function syncAltarStreamForCurrentModes(nextActive = altarTrackingEnabled) {
+  const shouldTrackAltars = Boolean(nextActive);
+  uiSettings = await window.livemapApi.setAltarTracking(shouldTrackAltars);
+  altarTrackingEnabled = Boolean(uiSettings?.altarTrackingEnabled);
+  updateAltarTrackerButtonState();
+}
+
 function saveNearestMarkerState(enabled) {
   nearestMarkerEnabled = enabled;
   saveUiSettings({
@@ -1273,6 +1383,10 @@ function closeConfirmDialog(confirmed) {
 }
 
 async function toggleNearestMarkerWithRouteGuard() {
+  if (!hasFeatureAccess('findNearest')) {
+    return;
+  }
+
   const nextEnabled = !nearestMarkerEnabled;
   if (nextEnabled && activeRoute) {
     const confirmed = await openConfirmDialog('Der Routenplaner ist aktiv. Wenn du jetzt "Nearest" startest, wird die Route beendet und deine alten Filter werden wiederhergestellt.');
@@ -1330,6 +1444,22 @@ function ensurePlayerDistanceBadge() {
   });
 }
 
+function getNavigationTargetForPosition(position) {
+  if (altarPlacementTarget && Number.isFinite(altarPlacementTarget.x) && Number.isFinite(altarPlacementTarget.y)) {
+    return altarPlacementTarget;
+  }
+
+  if (!nearestMarkerEnabled || !position || !Number.isFinite(position.x) || !Number.isFinite(position.y)) {
+    return null;
+  }
+
+  return findNearestActiveMarkerEntry(position.x, position.y);
+}
+
+function getNearestLineTarget() {
+  return getNavigationTargetForPosition(playerPosition);
+}
+
 function refreshNearestMarkerLine() {
   if (!map) {
     return;
@@ -1339,7 +1469,8 @@ function refreshNearestMarkerLine() {
   ensurePlayerDistanceBadge();
   updateNearestMarkerButtonState();
 
-  const shouldShow = nearestMarkerEnabled && !activeRoute && !isMarkerOnlyMode && playerPosition;
+  const targetEntry = getNearestLineTarget();
+  const shouldShow = Boolean(targetEntry) && !activeRoute && !isMarkerOnlyMode && playerPosition;
   if (!shouldShow) {
     if (nearestMarkerLine && map.hasLayer(nearestMarkerLine)) {
       map.removeLayer(nearestMarkerLine);
@@ -1350,8 +1481,7 @@ function refreshNearestMarkerLine() {
     return;
   }
 
-  const nearestEntry = findNearestActiveMarkerEntry(playerPosition.x, playerPosition.y);
-  if (!nearestEntry) {
+  if (!targetEntry) {
     if (map.hasLayer(nearestMarkerLine)) {
       map.removeLayer(nearestMarkerLine);
     }
@@ -1362,8 +1492,8 @@ function refreshNearestMarkerLine() {
   }
 
   const playerLatLng = playerToLatLng(playerPosition.x, playerPosition.y);
-  const markerLatLng = oreToLatLng(nearestEntry.x, nearestEntry.y);
-  const distanceMeters = Math.round(Math.hypot(nearestEntry.x - playerPosition.x, nearestEntry.y - playerPosition.y));
+  const markerLatLng = oreToLatLng(targetEntry.x, targetEntry.y);
+  const distanceMeters = Math.round(Math.hypot(targetEntry.x - playerPosition.x, targetEntry.y - playerPosition.y));
   nearestMarkerLine.setLatLngs([playerLatLng, markerLatLng]);
 
   if (!map.hasLayer(nearestMarkerLine)) {
@@ -1387,10 +1517,16 @@ function createMarkerOnlyNearestButton() {
   button.type = 'button';
   button.className = 'marker-only-filter-button marker-only-nearest-button';
   button.dataset.active = nearestMarkerEnabled ? 'true' : 'false';
+  if (!hasFeatureAccess('findNearest')) {
+    button.classList.add('feature-locked');
+  }
   button.setAttribute('aria-label', 'Nächsten Marker finden');
   button.innerHTML = '<img class="marker-only-filter-icon marker-only-nearest-icon" src="map/findnearest.png" alt="">';
   button.addEventListener('click', (event) => {
     event.stopPropagation();
+    if (!hasFeatureAccess('findNearest')) {
+      return;
+    }
     toggleNearestMarkerWithRouteGuard();
   });
   return button;
@@ -1401,11 +1537,47 @@ function createMarkerOnlyRoutePlannerButton() {
   button.type = 'button';
   button.className = 'marker-only-filter-button marker-only-route-button';
   button.dataset.active = activeRoute ? 'true' : 'false';
+  if (!hasFeatureAccess('routePlanner')) {
+    button.classList.add('feature-locked');
+  }
   button.setAttribute('aria-label', 'Routenplaner');
   button.innerHTML = '<img class="marker-only-filter-icon marker-only-route-icon" src="map/routenplaner.png" alt="">';
   button.addEventListener('click', (event) => {
     event.stopPropagation();
+    if (!hasFeatureAccess('routePlanner')) {
+      return;
+    }
     window.livemapApi.openRoutePlanner();
+  });
+  return button;
+}
+
+function createMarkerOnlyWorldBossButton() {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'marker-only-filter-button marker-only-worldboss-button';
+  button.dataset.active = hasFeatureAccess('worldBossTimer') && isWorldBossOverlayVisible() ? 'true' : 'false';
+  button.setAttribute('aria-label', 'Weltbosse');
+  button.disabled = !hasFeatureAccess('worldBossTimer');
+  button.classList.toggle('feature-locked', !hasFeatureAccess('worldBossTimer'));
+  button.innerHTML = '<img class="marker-only-filter-icon marker-only-worldboss-icon" src="map/weltboss.png" alt="">';
+  button.addEventListener('click', (event) => {
+    event.stopPropagation();
+    toggleWorldBossOverlay();
+  });
+  return button;
+}
+
+function createMarkerOnlyAltarTargetStopButton() {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'marker-only-filter-button marker-only-altar-stop-button';
+  button.dataset.active = altarPlacementTarget ? 'true' : 'false';
+  button.setAttribute('aria-label', 'Zielführung zum freien Altarplatz stoppen');
+  button.innerHTML = '<span class="marker-only-stop-label">X</span>';
+  button.addEventListener('click', (event) => {
+    event.stopPropagation();
+    setAltarPlacementTarget(null);
   });
   return button;
 }
@@ -2392,8 +2564,8 @@ function drawMarkerOnlyCanvas() {
   const centerY = height / 2;
 
   const now = Date.now();
-  const nearestEntry = !activeRoute && nearestMarkerEnabled
-    ? findNearestActiveMarkerEntry(displayPosition.x, displayPosition.y)
+  const navigationTarget = !activeRoute
+    ? getNavigationTargetForPosition(displayPosition)
     : null;
   let nearestDrawPoint = null;
   const routeToDraw = activeRoute || routePreview;
@@ -2410,12 +2582,12 @@ function drawMarkerOnlyCanvas() {
   const routeGuidePoint = activeRoute?.points?.[activeRoute.currentIndex] || null;
   let routeGuideDrawPoint = null;
 
-  if (nearestEntry) {
-    const nearestPixel = gameToPixel(nearestEntry.x, nearestEntry.y);
+  if (navigationTarget) {
+    const nearestPixel = gameToPixel(navigationTarget.x, navigationTarget.y);
     nearestDrawPoint = {
       x: centerX + ((nearestPixel.x - displayPixel.x) * MARKER_ONLY_SCALE),
       y: centerY - ((nearestPixel.y - displayPixel.y) * MARKER_ONLY_SCALE),
-      distance: Math.round(Math.hypot(nearestEntry.x - displayPosition.x, nearestEntry.y - displayPosition.y)),
+      distance: Math.round(Math.hypot(navigationTarget.x - displayPosition.x, navigationTarget.y - displayPosition.y)),
     };
   }
 
@@ -2479,6 +2651,22 @@ function drawMarkerOnlyCanvas() {
     ctx.stroke();
     ctx.fillStyle = '#d8e3e8';
     ctx.fillText(distanceLabel, centerX, badgeY + (badgeHeight / 2) + 0.5);
+    ctx.restore();
+  }
+
+  if (altarPlacementTarget && nearestDrawPoint) {
+    ctx.save();
+    ctx.strokeStyle = 'rgba(121, 242, 168, 0.95)';
+    ctx.fillStyle = 'rgba(121, 242, 168, 0.22)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(nearestDrawPoint.x, nearestDrawPoint.y, 11, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.fillStyle = 'rgba(121, 242, 168, 1)';
+    ctx.arc(nearestDrawPoint.x, nearestDrawPoint.y, 4.5, 0, Math.PI * 2);
+    ctx.fill();
     ctx.restore();
   }
 
@@ -2666,6 +2854,218 @@ function saveUiSettings(patch) {
   window.livemapApi.setUiSettings(patch);
 }
 
+function getWorldBossTrackerSettings() {
+  return uiSettings?.worldBossTracker || { bosses: {} };
+}
+
+function isWorldBossOverlayVisible() {
+  return uiSettings?.worldBossOverlayVisible !== false;
+}
+
+function formatWorldBossSpawnTime(boss) {
+  return `${String(boss.hour).padStart(2, '0')}:${String(boss.minute).padStart(2, '0')}`;
+}
+
+function getNextWorldBossSpawnAt(boss) {
+  const now = new Date();
+  const next = new Date(now);
+  next.setHours(boss.hour, boss.minute, 0, 0);
+
+  if (next.getTime() <= now.getTime()) {
+    next.setDate(next.getDate() + 1);
+  }
+
+  return next;
+}
+
+function getWorldBossRemainingMs(boss) {
+  return Math.max(0, getNextWorldBossSpawnAt(boss).getTime() - Date.now() + WORLD_BOSS_TIMER_CORRECTION_MS);
+}
+
+function formatWorldBossDuration(ms) {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
+function getWorldBossOverlayModeKey() {
+  return isMarkerOnlyMode ? 'markerOnly' : 'normal';
+}
+
+function getWorldBossOverlayPosition(modeKey = getWorldBossOverlayModeKey()) {
+  return {
+    x: 4,
+    y: null,
+  };
+}
+
+function clampWorldBossOverlayPosition(nextX, nextY) {
+  if (!worldBossOverlay || !mapViewportElement) {
+    return { x: nextX, y: nextY };
+  }
+
+  const margin = 12;
+  const viewportRect = mapViewportElement.getBoundingClientRect();
+  const overlayRect = worldBossOverlay.getBoundingClientRect();
+  const maxX = Math.max(margin, viewportRect.width - overlayRect.width - margin);
+  const maxY = Math.max(margin, viewportRect.height - overlayRect.height - margin);
+
+  return {
+    x: Math.min(Math.max(nextX, margin), maxX),
+    y: Math.min(Math.max(nextY, margin), maxY),
+  };
+}
+
+function applyWorldBossOverlayPosition() {
+  if (!worldBossOverlay) {
+    return;
+  }
+
+  const position = getWorldBossOverlayPosition();
+  worldBossOverlay.style.left = `${Math.round(position.x)}px`;
+  worldBossOverlay.style.top = '50%';
+}
+
+function syncWorldBossOverlayVisibility() {
+  const visible = hasFeatureAccess('worldBossTimer') && isWorldBossOverlayVisible();
+  if (worldBossOverlay) {
+    worldBossOverlay.dataset.visible = !isMarkerOnlyMode && visible ? 'true' : 'false';
+  }
+  if (worldBossButton) {
+    worldBossButton.dataset.active = visible ? 'true' : 'false';
+  }
+  const compactButton = markerOnlyFiltersElement?.querySelector('.marker-only-worldboss-button');
+  if (compactButton) {
+    compactButton.dataset.active = visible ? 'true' : 'false';
+  }
+}
+
+async function syncWorldBossPresentation() {
+  syncWorldBossOverlayVisibility();
+
+  if (!hasFeatureAccess('worldBossTimer')) {
+    await window.livemapApi.closeWorldBossWindow();
+    return;
+  }
+
+  if (isMarkerOnlyMode) {
+    if (isWorldBossOverlayVisible()) {
+      await window.livemapApi.openWorldBossWindow();
+    } else {
+      await window.livemapApi.closeWorldBossWindow();
+    }
+    return;
+  }
+
+  await window.livemapApi.closeWorldBossWindow();
+  applyWorldBossOverlayPosition();
+}
+
+function renderWorldBossOverlay() {
+  if (!worldBossOverlayList) {
+    return;
+  }
+
+  const tracker = getWorldBossTrackerSettings();
+  worldBossOverlayList.innerHTML = WORLD_BOSS_DEFINITIONS.map((boss) => {
+    const bossState = tracker.bosses?.[boss.id] || {};
+    const hasAlert = Number.isFinite(Number(bossState.alertOffsetMinutes)) && Number(bossState.alertOffsetMinutes) > 0;
+    return `
+    <article class="worldboss-overlay-card" data-alert-active="${hasAlert ? 'true' : 'false'}">
+      <div class="worldboss-overlay-card-icon-wrap">
+        <img class="worldboss-overlay-card-icon" src="${boss.icon}" alt="${boss.name}" title="${boss.name}">
+        <div class="worldboss-overlay-card-menu">
+          <strong>${boss.name}</strong>
+          <span>${formatWorldBossSpawnTime(boss)} Uhr</span>
+          <strong data-worldboss-overlay-status="${boss.id}">${formatWorldBossDuration(getWorldBossRemainingMs(boss))}</strong>
+          <label class="worldboss-overlay-card-menu-field">
+            <span>Alarm</span>
+            <select data-worldboss-overlay-alert="${boss.id}">
+              <option value="">Kein Alarm</option>
+              <option value="1" ${Number(bossState.alertOffsetMinutes) === 1 ? 'selected' : ''}>1 Min vorher</option>
+              <option value="5" ${Number(bossState.alertOffsetMinutes) === 5 ? 'selected' : ''}>5 Min vorher</option>
+              <option value="10" ${Number(bossState.alertOffsetMinutes) === 10 ? 'selected' : ''}>10 Min vorher</option>
+              <option value="15" ${Number(bossState.alertOffsetMinutes) === 15 ? 'selected' : ''}>15 Min vorher</option>
+              <option value="30" ${Number(bossState.alertOffsetMinutes) === 30 ? 'selected' : ''}>30 Min vorher</option>
+              <option value="60" ${Number(bossState.alertOffsetMinutes) === 60 ? 'selected' : ''}>60 Min vorher</option>
+            </select>
+          </label>
+      </div>
+      </div>
+    </article>`;
+  }).join('');
+
+  applyWorldBossOverlayPosition();
+}
+
+function updateWorldBossOverlayStatuses() {
+  if (!worldBossOverlayList) {
+    return;
+  }
+
+  for (const boss of WORLD_BOSS_DEFINITIONS) {
+    const statusElement = worldBossOverlayList.querySelector(`[data-worldboss-overlay-status="${boss.id}"]`);
+    if (statusElement) {
+      statusElement.textContent = formatWorldBossDuration(getWorldBossRemainingMs(boss));
+    }
+  }
+}
+
+function startWorldBossOverlayLoop() {
+  if (worldBossOverlayTimer) {
+    clearInterval(worldBossOverlayTimer);
+  }
+
+  worldBossOverlayTimer = setInterval(() => {
+    updateWorldBossOverlayStatuses();
+  }, 1000);
+}
+
+function startWorldBossOverlayDrag(event) {
+  if (!worldBossOverlay || !worldBossOverlayHeader) {
+    return;
+  }
+
+  const rect = worldBossOverlay.getBoundingClientRect();
+  const viewportRect = mapViewportElement?.getBoundingClientRect();
+  worldBossOverlayDragState = {
+    pointerId: event.pointerId,
+    offsetX: event.clientX - rect.left,
+    offsetY: event.clientY - rect.top,
+    viewportLeft: viewportRect?.left || 0,
+    viewportTop: viewportRect?.top || 0,
+  };
+
+  worldBossOverlayHeader.setPointerCapture?.(event.pointerId);
+  worldBossOverlay.dataset.dragging = 'true';
+}
+
+function updateWorldBossOverlayDrag(event) {
+  if (!worldBossOverlayDragState || worldBossOverlayDragState.pointerId !== event.pointerId) {
+    return;
+  }
+
+  const nextX = event.clientX - worldBossOverlayDragState.viewportLeft - worldBossOverlayDragState.offsetX;
+  const currentTop = Number.parseFloat(worldBossOverlay.style.top || '0');
+  const clamped = clampWorldBossOverlayPosition(nextX, currentTop);
+  worldBossOverlay.style.left = `${Math.round(clamped.x)}px`;
+}
+
+function stopWorldBossOverlayDrag(event) {
+  if (!worldBossOverlayDragState) {
+    return;
+  }
+
+  if (!event || worldBossOverlayDragState.pointerId === event.pointerId) {
+    worldBossOverlayHeader?.releasePointerCapture?.(worldBossOverlayDragState.pointerId);
+    worldBossOverlayDragState = null;
+    delete worldBossOverlay?.dataset.dragging;
+    applyWorldBossOverlayPosition();
+  }
+}
+
 function getCurrentViewKey() {
   return isMarkerOnlyMode ? 'markerView' : 'normalView';
 }
@@ -2713,13 +3113,35 @@ function saveSelectedAltarsState() {
   });
 }
 
+function getAltarPlacementTools() {
+  return {
+    showBlockedRadii: Boolean(uiSettings?.altarPlacementTools?.showBlockedRadii),
+    showBuildAreaSlots: Boolean(uiSettings?.altarPlacementTools?.showBuildAreaSlots),
+    showGuildBuildAreaSlots: Boolean(uiSettings?.altarPlacementTools?.showGuildBuildAreaSlots),
+  };
+}
+
+function applySelectedAltarsFromSettings(nextSettings = uiSettings) {
+  selectedPersonalAltarId = nextSettings?.selectedAltars?.personal?.id || null;
+  selectedGuildAltarId = nextSettings?.selectedAltars?.guild?.id || null;
+
+  if (nextSettings?.selectedAltars?.personal?.id) {
+    altarEntries.set(nextSettings.selectedAltars.personal.id, { ...nextSettings.selectedAltars.personal });
+  }
+  if (nextSettings?.selectedAltars?.guild?.id) {
+    altarEntries.set(nextSettings.selectedAltars.guild.id, { ...nextSettings.selectedAltars.guild });
+  }
+}
+
 function syncAltarLayerVisibility() {
   if (!map || !altarLayer) {
     return;
   }
 
   const hasSelectedAltars = Boolean(selectedPersonalAltarId || selectedGuildAltarId);
-  const shouldShow = altarsVisible && (altarTrackingEnabled || hasSelectedAltars);
+  const tools = getAltarPlacementTools();
+  const hasPlacementHelpers = (tools.showBlockedRadii || tools.showBuildAreaSlots || tools.showGuildBuildAreaSlots) && altarEntries.size > 0;
+  const shouldShow = altarsVisible && (altarTrackingEnabled || hasSelectedAltars || hasPlacementHelpers);
 
   if (shouldShow && !map.hasLayer(altarLayer)) {
     altarLayer.addTo(map);
@@ -2760,14 +3182,7 @@ async function applyCurrentViewSettings() {
   );
   altarTrackingEnabled = Boolean(uiSettings?.altarTrackingEnabled);
   altarsVisible = viewSettings.altarFilterEnabled !== false;
-  selectedPersonalAltarId = uiSettings?.selectedAltars?.personal?.id || null;
-  selectedGuildAltarId = uiSettings?.selectedAltars?.guild?.id || null;
-  if (uiSettings?.selectedAltars?.personal?.id) {
-    altarEntries.set(uiSettings.selectedAltars.personal.id, { ...uiSettings.selectedAltars.personal });
-  }
-  if (uiSettings?.selectedAltars?.guild?.id) {
-    altarEntries.set(uiSettings.selectedAltars.guild.id, { ...uiSettings.selectedAltars.guild });
-  }
+  applySelectedAltarsFromSettings(uiSettings);
   nearestMarkerEnabled = getSharedNearestMarkerEnabled();
   categoryFilterMemory = { ...(viewSettings.lastActiveFiltersByCategory || {}) };
   if (activeRoute && routeFilterOverrideBackup) {
@@ -2798,6 +3213,17 @@ function gameToPixel(x, z) {
 function gameToLatLng(x, z) {
   const pixel = gameToPixel(x, z);
   return L.latLng(pixel.y, pixel.x);
+}
+
+function latLngToGame(latLng) {
+  if (!latLng || !Number.isFinite(latLng.lat) || !Number.isFinite(latLng.lng)) {
+    return null;
+  }
+
+  return {
+    x: (latLng.lng - ORIGIN_PIXEL.x) * METERS_PER_PIXEL_X,
+    y: (latLng.lat - ORIGIN_PIXEL.y) * METERS_PER_PIXEL_Z,
+  };
 }
 
 function oreToLatLng(x, y) {
@@ -2912,7 +3338,13 @@ function initMap() {
   altarLayer = L.layerGroup().addTo(map);
   map.on('zoomend', refreshBuildAreaCircles);
   map.on('zoomend', refreshSelectedAltarCircles);
-  map.on('moveend', refreshClusteredBuildAreaVisibility);
+  map.on('moveend', () => {
+    refreshClusteredBuildAreaVisibility();
+    const tools = getAltarPlacementTools();
+    if (tools.showBuildAreaSlots || tools.showGuildBuildAreaSlots) {
+      renderSelectedAltarsOnMap();
+    }
+  });
 }
 
 function getAltarRadiusAtCurrentZoom() {
@@ -2921,6 +3353,50 @@ function getAltarRadiusAtCurrentZoom() {
   }
 
   return ALTAR_RADIUS_PIXELS * map.getZoomScale(map.getZoom(), 0);
+}
+
+function getMeterRadiusAtCurrentZoom(meters) {
+  const baseRadius = meters / ((METERS_PER_PIXEL_X + METERS_PER_PIXEL_Z) / 2);
+  if (!map) {
+    return baseRadius;
+  }
+
+  return baseRadius * map.getZoomScale(map.getZoom(), 0);
+}
+
+function createHatchedCircleMarker(latLng, meters, color, popup) {
+  const pixelRadius = Math.max(8, getMeterRadiusAtCurrentZoom(meters));
+  const diameter = Math.round(pixelRadius * 2);
+  const marker = L.marker(latLng, {
+    keyboard: false,
+    interactive: true,
+    icon: L.divIcon({
+      className: 'altar-block-area-wrap',
+      html: `<div class="altar-block-area" style="width:${diameter}px;height:${diameter}px;--block-color:${color};"></div>`,
+      iconSize: [diameter, diameter],
+      iconAnchor: [diameter / 2, diameter / 2],
+    }),
+  }).bindPopup(popup, { autoPan: true, className: 'map-popup-shell' });
+
+  return { marker, meters, color };
+}
+
+function setAltarPlacementTarget(target) {
+  if (target && Number.isFinite(target.x) && Number.isFinite(target.y)) {
+    altarPlacementTarget = {
+      id: String(target.id || `altar-slot:${target.x}:${target.y}`),
+      x: Number(target.x),
+      y: Number(target.y),
+      name: target.name || 'Freier Platz',
+    };
+  } else {
+    altarPlacementTarget = null;
+  }
+
+  renderLegend();
+  renderSelectedAltarsOnMap();
+  refreshNearestMarkerLine();
+  scheduleMarkerOnlyCanvasDraw();
 }
 
 function createAltarMarkerIcon(kind) {
@@ -2938,11 +3414,89 @@ function createAltarMarkerIcon(kind) {
   });
 }
 
+function createAltarPlacementSlotIcon() {
+  return L.divIcon({
+    className: 'altar-slot-marker-wrap',
+    html: `
+      <div class="altar-slot-marker-hitbox">
+        <div class="altar-slot-marker-core"></div>
+      </div>
+    `,
+    iconSize: [24, 24],
+    iconAnchor: [12, 12],
+    popupAnchor: [0, -10],
+  });
+}
+
 function clearAltarMarkers() {
   if (altarLayer) {
     altarLayer.clearLayers();
   }
   altarMarkers = new Map();
+  altarPlacementRadiusCircles = [];
+  altarPlacementLiveMarkers = [];
+  altarPlacementCandidateMarkers = [];
+  altarPlacementCandidateRadiusCircles = [];
+  altarPlacementPatternMarkers = [];
+}
+
+function scheduleAltarResultsRender() {
+  if (altarUiRenderTimer) {
+    return;
+  }
+
+  altarUiRenderTimer = setTimeout(() => {
+    altarUiRenderTimer = null;
+    renderAltarResults();
+    renderAltarSelectionSummary();
+  }, 80);
+}
+
+function scheduleAltarMapRender() {
+  if (altarMapRenderTimer || !altarsVisible) {
+    return;
+  }
+
+  altarMapRenderTimer = setTimeout(() => {
+    altarMapRenderTimer = null;
+    renderSelectedAltarsOnMap();
+  }, 220);
+}
+
+function getAltarMapRenderSignature() {
+  const tools = getAltarPlacementTools();
+  const selectedEntries = [
+    selectedPersonalAltarId ? altarEntries.get(selectedPersonalAltarId) : null,
+    selectedGuildAltarId ? altarEntries.get(selectedGuildAltarId) : null,
+  ]
+    .filter(Boolean)
+    .map((entry) => `${entry.id}:${entry.x}:${entry.y}:${entry.altar_type}`)
+    .join('|');
+
+  const helperEntries = (tools.showBlockedRadii || tools.showBuildAreaSlots || tools.showGuildBuildAreaSlots)
+    ? getLiveTrackedAltars()
+      .map((entry) => `${entry.id}:${entry.x}:${entry.y}:${entry.altar_type}`)
+      .sort()
+      .join('|')
+    : '';
+
+  const centerReference = map ? latLngToGame(map.getCenter()) : null;
+  const referencePoint = (
+    (centerReference && Number.isFinite(centerReference.x) && Number.isFinite(centerReference.y))
+      ? `${Math.round(centerReference.x)}:${Math.round(centerReference.y)}`
+      : selectedPersonalAltarId || selectedGuildAltarId || 'none'
+  );
+
+  return [
+    altarsVisible ? 'visible' : 'hidden',
+    selectedEntries,
+    tools.showBlockedRadii ? 'helpers:on' : 'helpers:off',
+    tools.showBuildAreaSlots ? 'slots:on' : 'slots:off',
+    tools.showGuildBuildAreaSlots ? 'guild-slots:on' : 'guild-slots:off',
+    helperEntries,
+    altarPlacementTarget?.id || 'no-target',
+    referencePoint,
+  ].join('::');
 }
 
 function createAltarFilterIconHtml() {
@@ -2974,49 +3528,258 @@ function buildAltarPopup(entry, kind) {
   `;
 }
 
-function renderSelectedAltarsOnMap() {
-  clearAltarMarkers();
+function getAltarKindFromEntry(entry) {
+  return Number(entry?.altar_type) === 2 ? 'guild' : 'personal';
+}
 
-  if (!map || !altarLayer || !altarsVisible) {
-    return;
-  }
+function getBuildAreaCenters() {
+  const centers = [];
 
-  const selections = [
-    { id: selectedPersonalAltarId, kind: 'personal', color: '#3b82f6', fillOpacity: 0.12 },
-    { id: selectedGuildAltarId, kind: 'guild', color: '#a855f7', fillOpacity: 0.12 },
-  ];
-
-  for (const selection of selections) {
-    const entry = selection.id ? altarEntries.get(selection.id) : null;
-    if (!entry) {
+  for (const key of BUILD_AREA_FILTER_KEYS) {
+    const marker = oreData[key];
+    if (!marker?.coordinates?.length) {
       continue;
     }
 
-    const latLng = oreToLatLng(entry.x, entry.y);
-    const popup = buildAltarPopup(entry, selection.kind);
-    const circle = L.circleMarker(latLng, {
-      radius: getAltarRadiusAtCurrentZoom(),
-      color: selection.color,
-      weight: 1.5,
-      fillColor: selection.color,
-      fillOpacity: selection.fillOpacity,
-      renderer: L.canvas({ padding: 0.4 }),
-    }).bindPopup(popup, { autoPan: true, className: 'map-popup-shell' });
-    const marker = L.marker(latLng, {
-      icon: createAltarMarkerIcon(selection.kind),
-      keyboard: false,
-    }).bindPopup(popup, { autoPan: true, className: 'map-popup-shell' });
+    for (const [x, y] of marker.coordinates) {
+      if (Number.isFinite(x) && Number.isFinite(y)) {
+        centers.push({ key, x, y });
+      }
+    }
+  }
 
-    circle.addTo(altarLayer);
-    marker.addTo(altarLayer);
-    altarMarkers.set(selection.kind, { marker, circle });
+  return centers;
+}
+
+function getLiveTrackedAltars() {
+  return Array.from(altarEntries.values()).filter((entry) => [1, 2].includes(Number(entry?.altar_type)));
+}
+
+function getAltarBlockRadiusMeters(entry) {
+  return Number(entry?.altar_type) === 2
+    ? GUILD_ALTAR_BLOCK_RADIUS_METERS
+    : PERSONAL_ALTAR_BLOCK_RADIUS_METERS;
+}
+
+function renderLiveAltarPlacementHelpers() {
+  const tools = getAltarPlacementTools();
+  const liveAltars = getLiveTrackedAltars();
+
+  if (altarPlacementTarget || !tools.showBlockedRadii || !liveAltars.length) {
+    return;
+  }
+
+  for (const entry of liveAltars) {
+    const kind = getAltarKindFromEntry(entry);
+    const color = kind === 'guild' ? '#a855f7' : '#3b82f6';
+    const latLng = oreToLatLng(entry.x, entry.y);
+    const popup = buildAltarPopup(entry, kind);
+    const isSelected = entry.id === selectedPersonalAltarId || entry.id === selectedGuildAltarId;
+    const radiusCircle = createHatchedCircleMarker(latLng, getAltarBlockRadiusMeters(entry), color, popup);
+    radiusCircle.marker.addTo(altarLayer);
+    altarPlacementRadiusCircles.push(radiusCircle);
+    altarPlacementPatternMarkers.push(radiusCircle.marker);
+    if (!isSelected) {
+      const marker = L.marker(latLng, {
+        icon: createAltarMarkerIcon(kind),
+        keyboard: false,
+        opacity: 0.92,
+      }).bindPopup(popup, { autoPan: true, className: 'map-popup-shell' });
+      marker.addTo(altarLayer);
+      altarPlacementLiveMarkers.push(marker);
+    }
   }
 }
 
+function renderPotentialBuildAreaSlots() {
+  const tools = getAltarPlacementTools();
+  const showPrivateSlots = tools.showBuildAreaSlots;
+  const showGuildSlots = tools.showGuildBuildAreaSlots;
+  if (!showPrivateSlots && !showGuildSlots) {
+    return;
+  }
+
+  const buildAreas = getBuildAreaCenters();
+  const liveAltars = getLiveTrackedAltars();
+  if (!buildAreas.length) {
+    return;
+  }
+
+  const centerReference = map ? latLngToGame(map.getCenter()) : null;
+  const referencePoint = (
+    (centerReference && Number.isFinite(centerReference.x) && Number.isFinite(centerReference.y))
+      ? centerReference
+      : (selectedPersonalAltarId && altarEntries.get(selectedPersonalAltarId))
+  ) || (selectedGuildAltarId && altarEntries.get(selectedGuildAltarId)) || buildAreas[0];
+  const nearestBuildArea = buildAreas
+    .slice()
+    .sort((left, right) => (
+      Math.hypot(left.x - referencePoint.x, left.y - referencePoint.y)
+      - Math.hypot(right.x - referencePoint.x, right.y - referencePoint.y)
+    ))[0];
+
+  if (!nearestBuildArea) {
+    return;
+  }
+
+  const candidateStep = showGuildSlots ? 40 : 28;
+  const candidateRadius = showGuildSlots
+    ? GUILD_ALTAR_BLOCK_RADIUS_METERS
+    : PRIVATE_ALTAR_SLOT_RADIUS_METERS;
+  const candidateTitle = showGuildSlots
+    ? 'Freier Platz für Gildenaltar'
+    : 'Freier Platz f?r privaten Altar';
+  const candidateTargetName = showGuildSlots
+    ? 'Freier Platz für Gildenaltar'
+    : 'Freier Platz für privaten Altar';
+  const usableRadius = Math.max(0, BUILD_AREA_RADIUS_METERS - candidateRadius);
+  const maxCandidates = 48;
+  const acceptedCandidates = [];
+
+  for (let offsetX = -usableRadius; offsetX <= usableRadius; offsetX += candidateStep) {
+    for (let offsetY = -usableRadius; offsetY <= usableRadius; offsetY += candidateStep) {
+      const distanceToCenter = Math.hypot(offsetX, offsetY);
+      if (distanceToCenter > usableRadius) {
+        continue;
+      }
+
+      const x = nearestBuildArea.x + offsetX;
+      const y = nearestBuildArea.y + offsetY;
+      const blockedByExistingAltars = liveAltars.some((entry) => (
+        Math.hypot(entry.x - x, entry.y - y) < (getAltarBlockRadiusMeters(entry) + candidateRadius)
+      ));
+      if (blockedByExistingAltars) {
+        continue;
+      }
+
+      const blockedByAcceptedCandidates = acceptedCandidates.some((entry) => (
+        Math.hypot(entry.x - x, entry.y - y) < (candidateRadius * 2)
+      ));
+      if (blockedByAcceptedCandidates) {
+        continue;
+      }
+
+      const candidateId = `altar-slot:${nearestBuildArea.key}:${x}:${y}`;
+      acceptedCandidates.push({ id: candidateId, x, y });
+      const latLng = oreToLatLng(x, y);
+      const targetIsActive = altarPlacementTarget?.id === candidateId;
+      if (altarPlacementTarget && !targetIsActive) {
+        continue;
+      }
+      const candidateCircle = L.circleMarker(latLng, {
+        radius: getMeterRadiusAtCurrentZoom(candidateRadius),
+        color: '#22c55e',
+        weight: 1.5,
+        fillColor: '#22c55e',
+        fillOpacity: 0.08,
+        dashArray: '6 6',
+        interactive: false,
+        renderer: L.canvas({ padding: 0.4 }),
+      });
+      const marker = L.marker(latLng, {
+        icon: createAltarPlacementSlotIcon(),
+        keyboard: false,
+      }).bindPopup(`
+        <div class="map-popup">
+          <div class="map-popup-title">${candidateTitle}</div>
+          <div class="map-popup-row"><span>X</span><strong>${x.toFixed(2)}</strong></div>
+          <div class="map-popup-row"><span>Y</span><strong>${y.toFixed(2)}</strong></div>
+          <div class="map-popup-actions">
+            ${targetIsActive
+              ? '<button class="map-popup-action-button map-popup-action-button-danger altar-slot-clear-button" type="button">Ziel entfernen</button>'
+              : `<button class="map-popup-action-button map-popup-action-button-primary altar-slot-target-button" type="button" data-slot-id="${candidateId}" data-slot-x="${x}" data-slot-y="${y}" data-slot-name="${candidateTargetName}">Als Ziel setzen</button>`}
+          </div>
+        <span class="admin-row-state ${isBlocked ? 'is-blocked' : 'is-active'}">${isBlocked ? 'Account gesperrt' : 'Account aktiv'}</span>
+      </div>
+      `, { autoPan: true, className: 'map-popup-shell' });
+
+      candidateCircle.addTo(altarLayer);
+      marker.addTo(altarLayer);
+      altarPlacementCandidateRadiusCircles.push({ circle: candidateCircle, meters: candidateRadius });
+      altarPlacementCandidateMarkers.push(candidateCircle);
+      altarPlacementCandidateMarkers.push(marker);
+      if (acceptedCandidates.length >= maxCandidates) {
+        return;
+      }
+    }
+  }
+}
+
+function renderSelectedAltarsOnMap() {
+  if (!map || !altarLayer || !altarsVisible) {
+    altarMapRenderSignature = '';
+    return;
+  }
+
+  const nextSignature = getAltarMapRenderSignature();
+  if (nextSignature === altarMapRenderSignature) {
+    return;
+  }
+
+  clearAltarMarkers();
+  if (!altarPlacementTarget) {
+    const selections = [
+      { id: selectedPersonalAltarId, kind: 'personal', color: '#3b82f6', fillOpacity: 0.12 },
+      { id: selectedGuildAltarId, kind: 'guild', color: '#a855f7', fillOpacity: 0.12 },
+    ];
+
+    for (const selection of selections) {
+      const entry = selection.id ? altarEntries.get(selection.id) : null;
+      if (!entry) {
+        continue;
+      }
+
+      const latLng = oreToLatLng(entry.x, entry.y);
+      const popup = buildAltarPopup(entry, selection.kind);
+      const circle = L.circleMarker(latLng, {
+        radius: getAltarRadiusAtCurrentZoom(),
+        color: selection.color,
+        weight: 1.5,
+        fillColor: selection.color,
+        fillOpacity: selection.fillOpacity,
+        interactive: false,
+        renderer: L.canvas({ padding: 0.4 }),
+      });
+      const marker = L.marker(latLng, {
+        icon: createAltarMarkerIcon(selection.kind),
+        keyboard: false,
+      }).bindPopup(popup, { autoPan: true, className: 'map-popup-shell' });
+
+      circle.addTo(altarLayer);
+      marker.addTo(altarLayer);
+      altarMarkers.set(selection.kind, { marker, circle });
+    }
+  }
+
+  renderLiveAltarPlacementHelpers();
+  renderPotentialBuildAreaSlots();
+  altarMapRenderSignature = nextSignature;
+}
+
 function refreshSelectedAltarCircles() {
+  for (const entry of altarPlacementRadiusCircles) {
+    const pixelRadius = Math.max(8, getMeterRadiusAtCurrentZoom(entry.meters));
+    const diameter = Math.round(pixelRadius * 2);
+    const html = `<div class="altar-block-area" style="width:${diameter}px;height:${diameter}px;--block-color:${entry.color};"></div>`;
+    if (entry.marker) {
+      entry.marker.setIcon(L.divIcon({
+        className: 'altar-block-area-wrap',
+        html,
+        iconSize: [diameter, diameter],
+        iconAnchor: [diameter / 2, diameter / 2],
+      }));
+    }
+  }
   const radius = getAltarRadiusAtCurrentZoom();
   for (const entry of altarMarkers.values()) {
     entry.circle?.setRadius(radius);
+  }
+  const tools = getAltarPlacementTools();
+  const candidateRadius = getMeterRadiusAtCurrentZoom(
+    tools.showGuildBuildAreaSlots ? GUILD_ALTAR_BLOCK_RADIUS_METERS : PRIVATE_ALTAR_SLOT_RADIUS_METERS
+  );
+  for (const entry of altarPlacementCandidateRadiusCircles) {
+    entry.circle?.setRadius(candidateRadius);
   }
 }
 
@@ -3065,7 +3828,10 @@ function matchesAltarSearch(entry, query) {
 
 function getFilteredAltars() {
   const query = altarSearchQuery.trim().toLowerCase();
-  return Array.from(altarEntries.values())
+  const sourceEntries = Array.from(altarEntries.values())
+    .filter((entry) => [1, 2].includes(Number(entry.altar_type)));
+
+  return sourceEntries
     .filter((entry) => matchesAltarSearch(entry, query))
     .sort((left, right) => left.name.localeCompare(right.name));
 }
@@ -3102,6 +3868,18 @@ function renderAltarResults() {
   }
 
   for (const entry of entries) {
+    const altarType = Number(entry.altar_type);
+    const actionButtons = [];
+    if (altarType === 1) {
+      actionButtons.push(`<button class="altar-action-button altar-action-button-personal" data-kind="personal" data-altar-id="${entry.id}" type="button" aria-label="Persoenlichen Altar setzen">
+          <img src="${PERSONAL_ALTAR_ICON_PATH}" alt="Persoenlicher Altar">
+        </button>`);
+    }
+    if (altarType === 2) {
+      actionButtons.push(`<button class="altar-action-button altar-action-button-guild" data-kind="guild" data-altar-id="${entry.id}" type="button" aria-label="Gildenaltar setzen">
+          <img src="${GUILD_ALTAR_ICON_PATH}" alt="Gildenaltar">
+        </button>`);
+    }
     const card = document.createElement('article');
     card.className = 'altar-result-card';
     card.innerHTML = `
@@ -3109,12 +3887,7 @@ function renderAltarResults() {
         <strong>${entry.name}</strong>
       </div>
       <div class="altar-result-actions">
-        <button class="altar-action-button altar-action-button-personal" data-kind="personal" data-altar-id="${entry.id}" type="button" aria-label="Persönlichen Altar setzen">
-          <img src="${PERSONAL_ALTAR_ICON_PATH}" alt="Persönlicher Altar">
-        </button>
-        <button class="altar-action-button altar-action-button-guild" data-kind="guild" data-altar-id="${entry.id}" type="button" aria-label="Gildenaltar setzen">
-          <img src="${GUILD_ALTAR_ICON_PATH}" alt="Gildenaltar">
-        </button>
+        ${actionButtons.join('')}
         <button class="altar-action-button altar-action-button-center" data-kind="center" data-altar-id="${entry.id}" type="button" aria-label="Auf Altar zentrieren">
           <img src="${CENTER_ICON_PATH}" alt="Zentrieren">
         </button>
@@ -3125,6 +3898,10 @@ function renderAltarResults() {
 }
 
 function openAltarOverlay() {
+  if (!hasFeatureAccess('altars')) {
+    return;
+  }
+
   if (altarOverlay) {
     altarOverlay.hidden = false;
   }
@@ -3141,56 +3918,202 @@ async function closeAltarOverlay() {
   if (altarSearchInput) {
     altarSearchInput.value = '';
   }
-  pruneAltarEntriesToSelections();
   renderAltarSelectionSummary();
   renderAltarResults();
 
   if (altarTrackingEnabled) {
-    uiSettings = await window.livemapApi.setAltarTracking(false);
-    altarTrackingEnabled = Boolean(uiSettings?.altarTrackingEnabled);
-    updateAltarTrackerButtonState();
+    await syncAltarStreamForCurrentModes(false);
   }
-
   syncAltarLayerVisibility();
 }
 
 function upsertAltarEntry(data) {
   const x = Number(data?.x);
   const y = Number(data?.y);
-  const id = String(data?.id || `${data?.name || 'altar'}:${x}:${y}`);
   const name = String(data?.name || 'Unbekannter Altar').trim();
+  const altarType = Number(data?.altar_type);
+  const normalizedAltarType = Number.isFinite(altarType) ? altarType : null;
+  const stableId = `${name}:${x}:${y}:${normalizedAltarType ?? 'unknown'}`;
+  const incomingId = String(data?.id || stableId);
+  const id = stableId;
 
   if (!Number.isFinite(x) || !Number.isFinite(y) || !id) {
     return;
   }
 
-  altarEntries.set(id, { id, name, x, y });
-  renderAltarResults();
-  renderAltarSelectionSummary();
-  renderSelectedAltarsOnMap();
+  for (const [existingId, existingEntry] of altarEntries.entries()) {
+    if (
+      existingId !== id
+      && existingEntry?.name === name
+      && Number(existingEntry?.x) === x
+      && Number(existingEntry?.y) === y
+      && Number(existingEntry?.altar_type) === normalizedAltarType
+    ) {
+      altarEntries.delete(existingId);
+      if (selectedPersonalAltarId === existingId) {
+        selectedPersonalAltarId = id;
+      }
+      if (selectedGuildAltarId === existingId) {
+        selectedGuildAltarId = id;
+      }
+    }
+  }
+
+  const nextEntry = {
+    id,
+    sourceId: incomingId,
+    name,
+    x,
+    y,
+    altar_type: normalizedAltarType,
+  };
+  const previousEntry = altarEntries.get(id);
+  if (previousEntry
+    && previousEntry.name === nextEntry.name
+    && previousEntry.x === nextEntry.x
+    && previousEntry.y === nextEntry.y
+    && Number(previousEntry.altar_type) === Number(nextEntry.altar_type)) {
+    return;
+  }
+
+  altarEntries.set(id, nextEntry);
+  scheduleAltarResultsRender();
+
+  const tools = getAltarPlacementTools();
+  const affectsMap = (
+    id === selectedPersonalAltarId
+    || id === selectedGuildAltarId
+    || tools.showBlockedRadii
+    || tools.showBuildAreaSlots
+  );
+  if (affectsMap) {
+    scheduleAltarMapRender();
+  }
 }
 
-function centerMapOnAltarEntry(altarId) {
+function clearAltarFocusPing() {
+  if (altarFocusPingTimer) {
+    clearTimeout(altarFocusPingTimer);
+    altarFocusPingTimer = null;
+  }
+  if (altarFocusPingMarker && map?.hasLayer(altarFocusPingMarker)) {
+    map.removeLayer(altarFocusPingMarker);
+  }
+  altarFocusPingMarker = null;
+}
+
+function clearAltarOverlayTransitionTimer() {
+  if (altarOverlayTransitionTimer) {
+    clearTimeout(altarOverlayTransitionTimer);
+    altarOverlayTransitionTimer = null;
+  }
+}
+
+function fadeOutAltarOverlay() {
+  if (!altarOverlay || altarOverlay.hidden) {
+    return Promise.resolve();
+  }
+
+  clearAltarOverlayTransitionTimer();
+  altarOverlay.dataset.transition = 'out';
+
+  return new Promise((resolve) => {
+    altarOverlayTransitionTimer = setTimeout(() => {
+      altarOverlay.hidden = true;
+      delete altarOverlay.dataset.transition;
+      altarOverlayTransitionTimer = null;
+      resolve();
+    }, 220);
+  });
+}
+
+function fadeInAltarOverlay() {
+  if (!altarOverlay) {
+    return Promise.resolve();
+  }
+
+  clearAltarOverlayTransitionTimer();
+  altarOverlay.hidden = false;
+  altarOverlay.dataset.transition = 'in';
+
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        altarOverlayTransitionTimer = setTimeout(() => {
+          delete altarOverlay.dataset.transition;
+          altarOverlayTransitionTimer = null;
+          resolve();
+        }, 220);
+      });
+    });
+  });
+}
+
+function showAltarFocusPing(entry) {
+  if (!entry || !map) {
+    return;
+  }
+
+  clearAltarFocusPing();
+  altarFocusPingMarker = L.marker(oreToLatLng(entry.x, entry.y), {
+    interactive: false,
+    keyboard: false,
+    zIndexOffset: 2000,
+    icon: L.divIcon({
+      className: 'altar-focus-ping-wrap',
+      html: '<div class="altar-focus-ping-ring"></div><div class="altar-focus-ping-core"></div>',
+      iconSize: [74, 74],
+      iconAnchor: [37, 37],
+    }),
+  }).addTo(map);
+
+  altarFocusPingTimer = setTimeout(() => {
+    clearAltarFocusPing();
+  }, 3000);
+}
+
+async function centerMapOnAltarEntry(altarId) {
   const entry = altarEntries.get(altarId);
   if (!entry || !map) {
     return;
   }
 
+  const shouldRestoreOverlay = Boolean(altarOverlay && !altarOverlay.hidden);
+  await fadeOutAltarOverlay();
+
   map.flyTo(oreToLatLng(entry.x, entry.y), Math.max(map.getZoom(), 1.8), {
     animate: true,
     duration: 0.6,
   });
+  showAltarFocusPing(entry);
+
+  await new Promise((resolve) => {
+    setTimeout(resolve, 3000);
+  });
+
+  if (shouldRestoreOverlay && altarOverlay) {
+    renderAltarSelectionSummary();
+    renderAltarResults();
+    await fadeInAltarOverlay();
+  }
 }
 
 async function openAltarSelector() {
-  if (!altarTrackingEnabled) {
-    uiSettings = await window.livemapApi.setAltarTracking(true);
-    altarTrackingEnabled = Boolean(uiSettings?.altarTrackingEnabled);
+  if (!hasFeatureAccess('altars')) {
+    return;
+  }
+  await window.livemapApi.openAltarSelectorWindow();
+}
+
+function toggleWorldBossOverlay() {
+  if (!hasFeatureAccess('worldBossTimer')) {
+    return;
   }
 
-  syncAltarLayerVisibility();
-  updateAltarTrackerButtonState();
-  openAltarOverlay();
+  saveUiSettings({
+    worldBossOverlayVisible: !isWorldBossOverlayVisible(),
+  });
+  void syncWorldBossPresentation();
 }
 
 function buildOreLayers() {
@@ -3334,6 +4257,7 @@ function syncOreLayers() {
   }
 
   scheduleMarkerOnlyCanvasDraw();
+  updateMarkerStatus();
 }
 
 function renderLegend() {
@@ -3346,7 +4270,7 @@ function renderLegend() {
     legendOverlayRoot.hidden = true;
   }
 
-  const groups = getCategoryGroups();
+  const groups = getVisibleCategoryGroups();
   const categoryMenu = document.createElement('div');
   categoryMenu.className = 'legend-category-menu';
 
@@ -3362,6 +4286,10 @@ function renderLegend() {
   if (markerOnlyFiltersElement) {
     markerOnlyFiltersElement.appendChild(createMarkerOnlyNearestButton());
     markerOnlyFiltersElement.appendChild(createMarkerOnlyRoutePlannerButton());
+    markerOnlyFiltersElement.appendChild(createMarkerOnlyWorldBossButton());
+    if (altarPlacementTarget) {
+      markerOnlyFiltersElement.appendChild(createMarkerOnlyAltarTargetStopButton());
+    }
   }
 
   categoryMenu.addEventListener('mouseleave', () => {
@@ -3442,7 +4370,7 @@ function renderLegend() {
     itemsBody.appendChild(button);
   }
 
-  if (activeGroup.category === 'standart') {
+  if (activeGroup.category === 'standart' && hasFeatureAccess('altars')) {
     const altarButton = document.createElement('button');
     altarButton.type = 'button';
     altarButton.className = 'legend-item';
@@ -3482,6 +4410,374 @@ function setStatusPill(element, label, tone) {
   element.innerHTML = `<span class="status-dot"></span><span class="status-label">${label}</span>`;
 }
 
+function formatMarkerCount(value) {
+  return new Intl.NumberFormat('de-DE').format(Math.max(0, Number(value) || 0));
+}
+
+function getActiveMarkerCount() {
+  return getMarkerEntries().reduce((sum, marker) => {
+    if (!activeOreFilters.has(marker.key)) {
+      return sum;
+    }
+
+    return sum + (Array.isArray(marker.coordinates) ? marker.coordinates.length : 0);
+  }, 0);
+}
+
+function updateMarkerStatus() {
+  if (!markerStatusElement) {
+    return;
+  }
+
+  const markerCount = getActiveMarkerCount();
+  setStatusPill(markerStatusElement, `${formatMarkerCount(markerCount)} Marker`, 'marker');
+}
+
+function hasFeatureAccess(featureKey) {
+  return Boolean(currentAuthState?.access?.features?.[featureKey]);
+}
+
+function isAccountBlocked() {
+  return Boolean(currentAuthState?.access?.blocked);
+}
+
+function updateFeatureLockedState(element, isAllowed) {
+  if (!element) {
+    return;
+  }
+
+  element.classList.toggle('feature-locked', !isAllowed);
+  if ('disabled' in element) {
+    element.disabled = !isAllowed;
+  }
+}
+
+function setMapAccountMenuOpen(isOpen) {
+  mapAccountMenuOpen = Boolean(isOpen);
+  if (mapAccountMenu) {
+    mapAccountMenu.hidden = !mapAccountMenuOpen;
+  }
+}
+
+function closeMapAccountMenu() {
+  setMapAccountMenuOpen(false);
+}
+
+function closeAdminOverlay() {
+  if (adminOverlay) {
+    adminOverlay.hidden = true;
+  }
+}
+
+function getFilteredAdminProfiles() {
+  const query = adminSearchQuery.trim().toLowerCase();
+  if (!query) {
+    return adminProfilesCache;
+  }
+
+  return adminProfilesCache.filter((profile) => {
+    const displayName = String(profile.discord_username || '').toLowerCase();
+    const discordId = String(profile.discord_user_id || '').toLowerCase();
+    const email = String(profile.email || '').toLowerCase();
+    return displayName.includes(query) || discordId.includes(query) || email.includes(query);
+  });
+}
+
+function renderAdminProfiles(profiles = adminProfilesCache) {
+  if (!adminProfilesList) {
+    return;
+  }
+
+  adminProfilesList.innerHTML = '';
+  if (!profiles.length) {
+    adminProfilesList.innerHTML = '<div class="planner-empty">Keine Profile gefunden.</div>';
+    return;
+  }
+
+  for (const profile of profiles) {
+    const isBlocked = Boolean(profile.blocked);
+    const row = document.createElement('div');
+    row.className = 'admin-row';
+    row.dataset.userId = profile.id;
+    row.innerHTML = `
+      <div class="admin-row-meta">
+        <strong class="admin-row-name">${profile.discord_username || profile.id}</strong>
+        <span class="admin-row-discord">${profile.discord_user_id ? `Discord ID: ${profile.discord_user_id}` : 'Discord ID nicht verfügbar'}</span>
+        <span class="admin-row-state ${isBlocked ? 'is-blocked' : 'is-active'}">${isBlocked ? 'Account gesperrt' : 'Account aktiv'}</span>
+      </div>
+      <div class="admin-row-actions">
+        <select data-field="role">
+        ${Object.entries(ACCESS_ROLE_LABELS).map(([role, label]) => `<option value="${role}" ${String(profile.role || 'public').toLowerCase() === role ? 'selected' : ''}>${label}</option>`).join('')}
+        </select>
+        <label class="admin-row-toggle">
+          <input data-field="blocked" type="checkbox" ${isBlocked ? 'checked' : ''}>
+          <span>Gesperrt</span>
+        </label>
+        <button class="planner-primary" type="button" data-action="save-access">Speichern</button>
+      </div>
+    `;
+    adminProfilesList.appendChild(row);
+  }
+}
+
+async function loadAdminProfiles() {
+  if (!adminStatusMessage || !adminProfilesList) {
+    return;
+  }
+
+  adminStatusMessage.textContent = 'Nutzer werden geladen...';
+  try {
+    const profiles = await window.livemapApi.listAdminProfiles();
+    adminProfilesCache = profiles;
+    const filteredProfiles = getFilteredAdminProfiles();
+    renderAdminProfiles(filteredProfiles);
+    adminStatusMessage.textContent = `${filteredProfiles.length} von ${profiles.length} Nutzern angezeigt.`;
+  } catch (error) {
+    adminStatusMessage.textContent = error?.message || 'Nutzer konnten nicht geladen werden.';
+    adminProfilesList.innerHTML = '<div class="planner-empty">Zugriffsverwaltung konnte nicht geladen werden.</div>';
+  }
+}
+
+async function openAdminOverlay() {
+  if (!hasFeatureAccess('admin') || !adminOverlay) {
+    return;
+  }
+
+  adminOverlay.hidden = false;
+  await loadAdminProfiles();
+}
+
+function updateFeatureAccessUi() {
+  if (!hasFeatureAccess('mapMarkerOnly') && isMarkerOnlyMode) {
+    isMarkerOnlyMode = false;
+    saveUiSettings({
+      markerOnlyMode: false,
+    });
+    applyMapMode();
+  }
+
+  if (!hasFeatureAccess('findNearest') && nearestMarkerEnabled) {
+    saveNearestMarkerState(false);
+    refreshNearestMarkerLine();
+    scheduleMarkerOnlyCanvasDraw();
+  }
+
+  if (!hasFeatureAccess('routePlanner')) {
+    abortRoute();
+  }
+
+  if (!hasFeatureAccess('worldBossTimer') && isWorldBossOverlayVisible()) {
+    saveUiSettings({
+      worldBossOverlayVisible: false,
+    });
+  }
+
+  updateFeatureLockedState(findNearestButton, hasFeatureAccess('findNearest'));
+  updateFeatureLockedState(routePlannerButton, hasFeatureAccess('routePlanner'));
+  updateFeatureLockedState(altarTrackerButton, hasFeatureAccess('altars'));
+  updateFeatureLockedState(worldBossButton, hasFeatureAccess('worldBossTimer'));
+  updateFeatureLockedState(mapModeButton, hasFeatureAccess('mapMarkerOnly'));
+  updateFeatureLockedState(compactMapModeButton, hasFeatureAccess('mapMarkerOnly'));
+  updateFeatureLockedState(
+    markerOnlyFiltersElement?.querySelector('.marker-only-worldboss-button'),
+    hasFeatureAccess('worldBossTimer'),
+  );
+  if (mapAccountAdminButton) {
+    mapAccountAdminButton.hidden = !hasFeatureAccess('admin');
+  }
+
+  if (!hasFeatureAccess('altars')) {
+    closeAltarOverlay();
+  }
+
+  if (!hasFeatureAccess('routePlanner')) {
+    closeRoutePlannerOverlay();
+  }
+
+  if (!hasFeatureAccess('admin')) {
+    closeAdminOverlay();
+  }
+
+  if (!hasFeatureAccess('worldBossTimer')) {
+    void window.livemapApi.closeWorldBossWindow();
+  }
+
+  if (legend) {
+    renderLegend();
+  }
+
+  syncWorldBossOverlayVisibility();
+}
+
+function cancelPendingLivemapStart() {
+  if (livemapStartTimer) {
+    window.clearTimeout(livemapStartTimer);
+    livemapStartTimer = null;
+  }
+  livemapStartPending = false;
+}
+
+async function startLivemapWithDelay() {
+  if (
+    livemapStarted
+    || livemapStartPending
+    || !currentAuthState?.session?.loggedIn
+    || isAccountBlocked()
+  ) {
+    return;
+  }
+
+  livemapStartPending = true;
+  applyAuthState(currentAuthState);
+
+  livemapStartTimer = window.setTimeout(async () => {
+    livemapStartTimer = null;
+    try {
+      if (!currentAuthState?.session?.loggedIn) {
+        return;
+      }
+      if (!appCoreInitialized) {
+        await initializeAuthorizedApp();
+      }
+      livemapStarted = true;
+    } finally {
+      livemapStartPending = false;
+      applyAuthState(currentAuthState);
+    }
+  }, 2000);
+}
+
+function syncLivemapStartState(state) {
+  const loggedIn = Boolean(state?.session?.loggedIn && state?.session?.userId);
+  const autoStartEnabled = Boolean(state?.preferences?.autoLogin);
+  const blocked = Boolean(state?.access?.blocked);
+
+  if (!loggedIn || blocked) {
+    cancelPendingLivemapStart();
+    livemapStarted = false;
+    return;
+  }
+
+  if (livemapStarted || livemapStartPending) {
+    return;
+  }
+
+  if (autoStartEnabled) {
+    void startLivemapWithDelay();
+  }
+}
+
+function applyAuthState(state) {
+  currentAuthState = state || null;
+  syncLivemapStartState(currentAuthState);
+
+  if (!authOverlay || !authTitle) {
+    return;
+  }
+
+  const configured = Boolean(state?.configured);
+  const hasSessionIdentity = Boolean(state?.session?.loggedIn && state?.session?.userId);
+  const loggedIn = hasSessionIdentity;
+  const blocked = Boolean(state?.access?.blocked);
+  const loading = Boolean(state?.loading || livemapStartPending);
+  const accessMessage = String(state?.access?.message || '');
+
+  document.body.classList.toggle('access-locked', !livemapStarted);
+  authOverlay.hidden = !startupGateFinished || livemapStarted;
+
+  authTitle.textContent = !loggedIn
+    ? 'Discord Login erforderlich'
+    : blocked
+      ? 'Account gesperrt'
+    : livemapStartPending
+      ? 'Livemap wird gestartet'
+      : 'Discord verbunden';
+
+  if (authUser) {
+    authUser.hidden = false;
+  }
+  if (loggedIn) {
+    authUserName.textContent = state?.session?.displayName || 'Discord Nutzer';
+    authUserEmail.textContent = blocked
+      ? accessMessage
+      : livemapStartPending
+      ? 'Userdaten werden geladen...'
+      : (state?.session?.email || '');
+    authAvatar.textContent = '';
+    authAvatar.style.backgroundImage = state?.session?.avatarUrl ? `url("${state.session.avatarUrl}")` : '';
+  } else {
+    if (authUserName) {
+      authUserName.textContent = 'Bitte mit Discord anmelden';
+    }
+    if (authUserEmail) {
+      authUserEmail.textContent = '';
+    }
+    if (authAvatar) {
+      authAvatar.textContent = '';
+      authAvatar.style.backgroundImage = '';
+    }
+  }
+
+  if (mapAccount) {
+    mapAccount.hidden = !startupGateFinished || !loggedIn || !livemapStarted;
+  }
+  if (loggedIn) {
+    if (mapAccountName) {
+      mapAccountName.textContent = state?.session?.displayName || 'Discord Nutzer';
+    }
+    if (mapAccountRole) {
+      mapAccountRole.textContent = ACCESS_ROLE_LABELS[String(state?.access?.role || 'public').toLowerCase()] || 'Public';
+    }
+    if (mapAccountAvatar) {
+      mapAccountAvatar.textContent = '';
+      mapAccountAvatar.style.backgroundImage = state?.session?.avatarUrl ? `url("${state.session.avatarUrl}")` : '';
+    }
+  } else {
+    closeMapAccountMenu();
+    if (mapAccountName) {
+      mapAccountName.textContent = 'Discord Nutzer';
+    }
+    if (mapAccountRole) {
+      mapAccountRole.textContent = 'Public';
+    }
+    if (mapAccountAvatar) {
+      mapAccountAvatar.textContent = '';
+      mapAccountAvatar.style.backgroundImage = '';
+    }
+  }
+
+  if (authAutoLoginCheckbox) {
+    authAutoLoginCheckbox.checked = Boolean(state?.preferences?.autoLogin);
+    authAutoLoginCheckbox.disabled = Boolean(state?.loading || blocked);
+  }
+
+  if (authLoginButton) {
+    authLoginButton.disabled = loading || !configured || blocked;
+    authLoginButton.hidden = blocked;
+    authLoginButton.textContent = !loggedIn
+      ? 'Mit Discord anmelden'
+      : livemapStartPending
+        ? 'Userdaten werden geladen...'
+        : 'Livemap starten';
+    authLoginButton.classList.add('planner-primary');
+    authLoginButton.classList.remove('planner-danger');
+    authLoginButton.classList.toggle('auth-button-loading', livemapStartPending);
+  }
+  if (authLogoutButton) {
+    authLogoutButton.hidden = !loggedIn;
+    authLogoutButton.disabled = loading || !loggedIn;
+    authLogoutButton.style.display = loggedIn ? '' : 'none';
+  }
+  if (mapAccountRefreshButton) {
+    mapAccountRefreshButton.disabled = loading || !configured || !loggedIn;
+  }
+  if (mapAccountLogoutButton) {
+    mapAccountLogoutButton.disabled = loading || !loggedIn;
+  }
+
+  updateFeatureAccessUi();
+}
+
 function renderUpdaterState(nextState) {
   updaterState = nextState || null;
   if (!updateToast || !updateToastMessage || !updaterState) {
@@ -3496,6 +4792,186 @@ function renderUpdaterState(nextState) {
   if (updateToastInstallButton) {
     updateToastInstallButton.hidden = updaterState.status !== 'ready';
   }
+}
+
+function initializeAuthUi() {
+  if (authLoginButton) {
+    authLoginButton.addEventListener('click', async () => {
+      try {
+        if (currentAuthState?.session?.loggedIn) {
+          await startLivemapWithDelay();
+          return;
+        }
+
+        await window.livemapApi.signInWithDiscord();
+      } catch (error) {
+        if (authUserName) {
+          authUserName.textContent = error?.message || 'Discord-Login fehlgeschlagen.';
+        }
+        if (authUserEmail) {
+          authUserEmail.textContent = '';
+        }
+      }
+    });
+  }
+
+  if (authAutoLoginCheckbox) {
+    authAutoLoginCheckbox.addEventListener('change', async () => {
+      try {
+        const nextState = await window.livemapApi.setAuthAutoLogin(authAutoLoginCheckbox.checked);
+        applyAuthState(nextState);
+      } catch (error) {
+        if (authUserName) {
+          authUserName.textContent = error?.message || 'Automatischer Start konnte nicht gespeichert werden.';
+        }
+        if (authUserEmail) {
+          authUserEmail.textContent = '';
+        }
+      }
+    });
+  }
+
+  if (authLogoutButton) {
+    authLogoutButton.addEventListener('click', async () => {
+      try {
+        const nextState = await window.livemapApi.signOutAuth();
+        applyAuthState(nextState);
+      } catch (error) {
+        if (authUserName) {
+          authUserName.textContent = error?.message || 'Abmeldung fehlgeschlagen.';
+        }
+        if (authUserEmail) {
+          authUserEmail.textContent = '';
+        }
+      }
+    });
+  }
+
+  if (authCloseButton) {
+    authCloseButton.addEventListener('click', () => {
+      window.livemapApi.closeWindow();
+    });
+  }
+
+  if (mapAccountButton) {
+    mapAccountButton.addEventListener('click', (event) => {
+      event.stopPropagation();
+      setMapAccountMenuOpen(!mapAccountMenuOpen);
+    });
+  }
+
+  if (mapAccountRefreshButton) {
+    mapAccountRefreshButton.addEventListener('click', async (event) => {
+      event.stopPropagation();
+      try {
+        const nextState = await window.livemapApi.refreshAuthAccess();
+        applyAuthState(nextState);
+      } catch (error) {
+        if (authUserName) {
+          authUserName.textContent = error?.message || 'Zugriff konnte nicht aktualisiert werden.';
+        }
+        if (authUserEmail) {
+          authUserEmail.textContent = '';
+        }
+      } finally {
+        closeMapAccountMenu();
+      }
+    });
+  }
+
+  if (mapAccountLogoutButton) {
+    mapAccountLogoutButton.addEventListener('click', async (event) => {
+      event.stopPropagation();
+      try {
+        const nextState = await window.livemapApi.signOutAuth();
+        applyAuthState(nextState);
+      } catch (error) {
+        if (authUserName) {
+          authUserName.textContent = error?.message || 'Abmeldung fehlgeschlagen.';
+        }
+        if (authUserEmail) {
+          authUserEmail.textContent = '';
+        }
+      } finally {
+        closeMapAccountMenu();
+      }
+    });
+  }
+
+  if (mapAccountAdminButton) {
+    mapAccountAdminButton.addEventListener('click', (event) => {
+      event.stopPropagation();
+      closeMapAccountMenu();
+      void openAdminOverlay();
+    });
+  }
+
+  if (adminCloseButton) {
+    adminCloseButton.addEventListener('click', () => {
+      closeAdminOverlay();
+    });
+  }
+
+  if (adminRefreshButton) {
+    adminRefreshButton.addEventListener('click', () => {
+      void loadAdminProfiles();
+    });
+  }
+
+  if (adminSearchInput) {
+    adminSearchInput.addEventListener('input', () => {
+      adminSearchQuery = adminSearchInput.value || '';
+      const filteredProfiles = getFilteredAdminProfiles();
+      renderAdminProfiles(filteredProfiles);
+      if (adminStatusMessage) {
+        adminStatusMessage.textContent = `${filteredProfiles.length} von ${adminProfilesCache.length} Nutzern angezeigt.`;
+      }
+    });
+  }
+
+  if (adminProfilesList) {
+    adminProfilesList.addEventListener('click', async (event) => {
+      const button = event.target.closest('button[data-action="save-access"]');
+      if (!button) {
+        return;
+      }
+
+      const row = button.closest('.admin-row');
+      if (!row) {
+        return;
+      }
+
+      const roleSelect = row.querySelector('select[data-field="role"]');
+      const blockedInput = row.querySelector('input[data-field="blocked"]');
+      button.disabled = true;
+      try {
+        await window.livemapApi.updateAdminProfile({
+          userId: row.dataset.userId,
+          role: roleSelect?.value,
+          blocked: Boolean(blockedInput?.checked),
+        });
+        adminStatusMessage.textContent = 'Zugriff gespeichert.';
+        await loadAdminProfiles();
+        applyAuthState(await window.livemapApi.getAuthState());
+      } catch (error) {
+        adminStatusMessage.textContent = error?.message || 'Zugriff konnte nicht gespeichert werden.';
+      } finally {
+        button.disabled = false;
+      }
+    });
+  }
+
+  if (adminOverlay) {
+    adminOverlay.addEventListener('click', (event) => {
+      if (event.target === adminOverlay.querySelector('.dialog-backdrop')) {
+        closeAdminOverlay();
+      }
+    });
+  }
+
+  window.livemapApi.onAuthState((state) => {
+    applyAuthState(state);
+  });
 }
 
 function renderStartupUpdaterState(state) {
@@ -3982,6 +5458,8 @@ function applyMapMode() {
   }
 
   map.invalidateSize();
+  void syncWorldBossPresentation();
+  updateWorldBossOverlayStatuses();
   if (isMarkerOnlyMode) {
     requestAnimationFrame(() => {
       if (!map || !isMarkerOnlyMode) {
@@ -3998,6 +5476,10 @@ function applyMapMode() {
 }
 
 async function toggleMapMode() {
+  if (!hasFeatureAccess('mapMarkerOnly')) {
+    return;
+  }
+
   await runViewTransition(async () => {
     const currentBounds = await window.livemapApi.getWindowBounds();
     const currentFilters = Array.from(activeOreFilters);
@@ -4110,6 +5592,515 @@ function stopResizeSession() {
   resizeSession = null;
 }
 
+async function initializeAuthorizedApp() {
+  if (appCoreInitialized) {
+    return;
+  }
+
+  appCoreInitialized = true;
+
+  uiSettings = await window.livemapApi.getUiSettings();
+  saveUiSettings({
+    altarPlacementTools: {
+      showBlockedRadii: false,
+      showBuildAreaSlots: false,
+      showGuildBuildAreaSlots: false,
+    },
+  });
+  uiSettings = await window.livemapApi.getUiSettings();
+  oreData = await window.livemapApi.getOreData();
+  isMarkerOnlyMode = Boolean(uiSettings?.markerOnlyMode);
+  isMarkerFrameVisible = Boolean(getViewSettings('markerView').frameVisible);
+
+  initMap();
+  buildOreLayers();
+  ensureMarkerCooldownTimer();
+  await applyCurrentViewSettings();
+
+  setChannelStatus(null);
+  updateMarkerStatus();
+  setLiveStatus('Warten auf spielerkoordinate', 'waiting');
+
+  window.livemapApi.onPlayerPosition((data) => {
+    updatePlayerMarker(data);
+  });
+
+  window.livemapApi.onAltarPosition((data) => {
+    upsertAltarEntry(data);
+  });
+
+  window.livemapApi.onAltarFocusRequest((entry) => {
+    if (!entry) {
+      return;
+    }
+    upsertAltarEntry(entry);
+    void centerMapOnAltarEntry(entry.id);
+  });
+
+  window.livemapApi.onUiSettings((nextSettings) => {
+    uiSettings = nextSettings || uiSettings;
+  altarTrackingEnabled = Boolean(uiSettings?.altarTrackingEnabled);
+  applySelectedAltarsFromSettings(uiSettings);
+  const tools = getAltarPlacementTools();
+  if (!tools.showBuildAreaSlots && !tools.showGuildBuildAreaSlots) {
+    setAltarPlacementTarget(null);
+  }
+  renderWorldBossOverlay();
+  void syncWorldBossPresentation();
+  syncAltarLayerVisibility();
+  renderSelectedAltarsOnMap();
+  updateAltarTrackerButtonState();
+  });
+
+  window.livemapApi.onPlayerError((message) => {
+    stopPlayerMarkerAnimation();
+    stopMarkerOnlyAnimation();
+    currentPlayerLatLng = null;
+    targetPlayerLatLng = null;
+    filteredPlayerPosition = null;
+    playerPosition = null;
+    markerOnlyTargetPosition = null;
+    markerOnlyDisplayPosition = null;
+    setLiveStatus('Warten auf spielerkoordinate', 'waiting');
+    coordXElement.textContent = '-';
+    coordZElement.textContent = '-';
+    coordYElement.textContent = '-';
+    console.error(message);
+  });
+
+  window.livemapApi.onInventoryUpdate((data) => {
+    updateInventoryPanel(data);
+  });
+
+  window.livemapApi.onInventoryError((message) => {
+    console.error(message);
+  });
+
+  window.livemapApi.onAltarError((message) => {
+    console.error(message);
+  });
+
+  renderUpdaterState(await window.livemapApi.getUpdaterState());
+  playerPositionLockState = await window.livemapApi.getPlayerPositionLock();
+  updatePlayerLockButtonState();
+  renderWorldBossOverlay();
+  startWorldBossOverlayLoop();
+  void syncWorldBossPresentation();
+  window.livemapApi.onUpdaterState((state) => {
+    renderUpdaterState(state);
+  });
+
+  if (playerCenterButton) {
+    playerCenterButton.addEventListener('click', () => {
+      centerMapOnPlayer();
+    });
+  }
+
+  if (findNearestButton) {
+    findNearestButton.addEventListener('click', () => {
+      void toggleNearestMarkerWithRouteGuard();
+    });
+  }
+
+  if (routePlannerButton) {
+    routePlannerButton.addEventListener('click', async () => {
+      const result = await window.livemapApi.openRoutePlanner();
+      if (result && result.ok === false) {
+        applyAuthState(await window.livemapApi.getAuthState());
+      }
+    });
+  }
+
+  if (altarTrackerButton) {
+    altarTrackerButton.addEventListener('click', () => {
+      void openAltarSelector();
+    });
+  }
+
+  if (worldBossButton) {
+    worldBossButton.addEventListener('click', () => {
+      toggleWorldBossOverlay();
+    });
+  }
+
+  if (worldBossOverlayList) {
+    worldBossOverlayList.addEventListener('change', (event) => {
+      const target = event.target;
+      const bossId = target.dataset.worldbossOverlayAlert;
+      if (!bossId) {
+        return;
+      }
+
+      const tracker = getWorldBossTrackerSettings();
+      const currentBoss = tracker.bosses?.[bossId] || {};
+      saveUiSettings({
+        worldBossTracker: {
+          ...tracker,
+          bosses: {
+            ...(tracker.bosses || {}),
+            [bossId]: {
+              ...currentBoss,
+              alertOffsetMinutes: target.value ? Number(target.value) : null,
+              lastAlertSignature: null,
+            },
+          },
+        },
+      });
+      renderWorldBossOverlay();
+    });
+  }
+
+  if (altarBackdrop) {
+    altarBackdrop.addEventListener('click', () => {
+      void closeAltarOverlay();
+    });
+  }
+
+  if (altarCloseButton) {
+    altarCloseButton.addEventListener('click', () => {
+      void closeAltarOverlay();
+    });
+  }
+
+  if (altarSearchInput) {
+    altarSearchInput.addEventListener('input', (event) => {
+      altarSearchQuery = event.target.value || '';
+      renderAltarResults();
+    });
+  }
+
+  if (altarResultsList) {
+    altarResultsList.addEventListener('click', (event) => {
+      const button = event.target.closest('button[data-kind][data-altar-id]');
+      if (!button) {
+        return;
+      }
+
+      const kind = button.dataset.kind;
+      const altarId = button.dataset.altarId;
+      if (!altarId) {
+        return;
+      }
+
+      if (kind === 'center') {
+        centerMapOnAltarEntry(altarId);
+        return;
+      }
+
+      setSelectedAltar(kind, altarId);
+    });
+  }
+
+  if (altarClearSelectionButton) {
+    altarClearSelectionButton.addEventListener('click', () => {
+      clearSelectedAltars();
+    });
+  }
+
+  if (playerLockButton) {
+    playerLockButton.addEventListener('click', () => {
+      void saveCurrentPlayerLock();
+    });
+  }
+
+  if (routePlannerBackdrop) {
+    routePlannerBackdrop.addEventListener('click', () => {
+      closeRoutePlannerOverlay();
+    });
+  }
+
+  if (routePlannerCloseButton) {
+    routePlannerCloseButton.addEventListener('click', () => {
+      closeRoutePlannerOverlay();
+    });
+  }
+
+  if (routePlannerHeader) {
+    routePlannerHeader.addEventListener('pointerdown', startRoutePlannerDrag);
+    routePlannerHeader.addEventListener('pointermove', updateRoutePlannerDrag);
+    routePlannerHeader.addEventListener('pointerup', stopRoutePlannerDrag);
+    routePlannerHeader.addEventListener('pointercancel', stopRoutePlannerDrag);
+  }
+
+  if (confirmDialogCancel) {
+    confirmDialogCancel.addEventListener('click', () => {
+      closeConfirmDialog(false);
+    });
+  }
+
+  if (confirmDialogConfirm) {
+    confirmDialogConfirm.addEventListener('click', () => {
+      closeConfirmDialog(true);
+    });
+  }
+
+  if (routeGenerateButton) {
+    routeGenerateButton.addEventListener('click', () => {
+      syncRoutePlannerConfigFromInputs();
+      generateRouteSuggestions();
+      renderRouteResults();
+    });
+  }
+
+  if (routeAbortButton) {
+    routeAbortButton.addEventListener('click', () => {
+      abortRoute();
+    });
+  }
+
+  window.livemapApi.onTutorialAction((action) => {
+    if (action === 'border-enable') {
+      if (!isMarkerFrameVisible) {
+        toggleMarkerFrame();
+      }
+      void handleTutorialRequiredAction('border-enable');
+      return;
+    }
+
+    if (action === 'border-disable') {
+      if (isMarkerFrameVisible) {
+        toggleMarkerFrame();
+      }
+      void handleTutorialRequiredAction('border-disable');
+      return;
+    }
+
+    if (action === 'next') {
+      void advanceTutorial();
+      return;
+    }
+
+    if (action === 'skip') {
+      void skipTutorial();
+    }
+  });
+
+  if (routeMarkerList) {
+    routeMarkerList.addEventListener('change', () => {
+      syncRoutePlannerConfigFromInputs();
+    });
+  }
+
+  if (routeUsePlayerStartInput) {
+    routeUsePlayerStartInput.addEventListener('change', () => {
+      syncRoutePlannerConfigFromInputs();
+    });
+  }
+
+  const routeAltarConstraintInputs = [
+    routeRequirePersonalAltarInput,
+    routeRequireGuildAltarInput,
+    routeRequireBothAltarsInput,
+  ].filter(Boolean);
+  for (const input of routeAltarConstraintInputs) {
+    input.addEventListener('change', (event) => {
+      if (event.target.checked) {
+        applyRouteAltarConstraintSelection(event.target.id === 'routeRequireBothAltars'
+          ? 'both'
+          : event.target.id === 'routeRequireGuildAltar'
+            ? 'guild'
+            : 'personal');
+      }
+      syncRoutePlannerConfigFromInputs();
+    });
+  }
+
+  if (routeResultsList) {
+    routeResultsList.addEventListener('click', (event) => {
+      const button = event.target.closest('button[data-action]');
+      if (!button) {
+        return;
+      }
+
+      const routeId = button.dataset.routeId;
+      if (button.dataset.action === 'preview') {
+        previewRoute(routeId);
+        return;
+      }
+
+      if (button.dataset.action === 'start') {
+        startRoute(routeId);
+      }
+    });
+  }
+
+  window.livemapApi.onRoutePreview((route) => {
+    applyRoutePreview(route);
+  });
+  window.livemapApi.onRouteStart((route) => {
+    applyRouteStart(route);
+  });
+  window.livemapApi.onRouteAbort(() => {
+    abortRoute(false);
+  });
+  window.livemapApi.onRouteState((state) => {
+    if (activeRoute && state?.activeRoute) {
+      activeRoute.paused = Boolean(state.paused);
+      updateRoutePreviewAndGuidance();
+      scheduleMarkerOnlyCanvasDraw();
+    }
+  });
+
+  if (mapFrameButton) {
+    mapFrameButton.addEventListener('click', () => {
+      toggleMarkerFrame();
+      void handleTutorialRequiredAction(isMarkerFrameVisible ? 'border-enable' : 'border-disable');
+    });
+  }
+
+  if (resizeHandles) {
+    for (const handle of resizeHandles.querySelectorAll('.resize-handle')) {
+      handle.addEventListener('pointerdown', async (event) => {
+        event.preventDefault();
+        await startResizeSession(handle.dataset.resize, event);
+      });
+    }
+
+    window.addEventListener('pointermove', (event) => {
+      handleResizeMove(event);
+    });
+    window.addEventListener('pointerup', stopResizeSession);
+    window.addEventListener('pointercancel', stopResizeSession);
+  }
+
+  if (opacityButton) {
+    const opacity = await window.livemapApi.getWindowOpacity();
+    updateOpacityLabel(opacity);
+    opacityButton.addEventListener('click', (event) => {
+      event.stopPropagation();
+      hideOpacityPopovers();
+      toggleOpacityPopover(opacityPopover);
+    });
+  }
+
+  if (opacitySlider) {
+    opacitySlider.addEventListener('input', async (event) => {
+      const value = Number(event.target.value);
+      const appliedValue = await window.livemapApi.setWindowOpacity(value);
+      updateOpacityLabel(appliedValue);
+      saveCurrentViewSettings({ windowOpacity: appliedValue });
+    });
+  }
+
+  if (tutorialButton) {
+    tutorialButton.addEventListener('click', () => {
+      void startTutorial(true);
+    });
+  }
+
+  if (minimizeButton) {
+    minimizeButton.addEventListener('click', () => {
+      window.livemapApi.minimizeWindow();
+    });
+  }
+
+  if (closeButton) {
+    closeButton.addEventListener('click', () => {
+      window.livemapApi.closeWindow();
+    });
+  }
+
+  if (updateToastInstallButton) {
+    updateToastInstallButton.addEventListener('click', async () => {
+      updateToastInstallButton.disabled = true;
+      try {
+        await window.livemapApi.installUpdateNow();
+      } finally {
+        updateToastInstallButton.disabled = false;
+      }
+    });
+  }
+
+  if (mapModeButton) {
+    mapModeButton.addEventListener('click', () => {
+      void toggleMapMode();
+    });
+  }
+
+  if (compactMapModeButton) {
+    compactMapModeButton.addEventListener('click', () => {
+      void toggleMapMode();
+    });
+  }
+
+  document.addEventListener('click', (event) => {
+    const altarSlotButton = event.target.closest('.altar-slot-target-button');
+    if (altarSlotButton) {
+      setAltarPlacementTarget({
+        id: altarSlotButton.dataset.slotId || `altar-slot:${altarSlotButton.dataset.slotX}:${altarSlotButton.dataset.slotY}`,
+        x: Number(altarSlotButton.dataset.slotX),
+        y: Number(altarSlotButton.dataset.slotY),
+        name: altarSlotButton.dataset.slotName || 'Freier Platz',
+      });
+      void window.livemapApi.closeAltarSelectorWindow();
+      return;
+    }
+
+    const altarSlotClearButton = event.target.closest('.altar-slot-clear-button');
+    if (altarSlotClearButton) {
+      setAltarPlacementTarget(null);
+      return;
+    }
+
+    const clickedPopover = (
+      opacityPopover && opacityPopover.contains(event.target)
+    );
+    const clickedButton = (
+      opacityButton && opacityButton.contains(event.target)
+    );
+
+    if (!opacityPopover) {
+      return;
+    }
+
+    if (!clickedPopover && !clickedButton) {
+      hideOpacityPopovers();
+    }
+
+    if (openLegendCategory
+      && legend
+      && !legend.contains(event.target)
+      && (!legendOverlayRoot || !legendOverlayRoot.contains(event.target))) {
+      closeLegendMenu();
+    }
+
+    if (mapAccountMenuOpen && mapAccount && !mapAccount.contains(event.target)) {
+      closeMapAccountMenu();
+    }
+  });
+
+  window.addEventListener('resize', () => {
+    if (isMarkerOnlyMode && targetPlayerLatLng) {
+      scheduleMarkerOnlyCanvasDraw();
+    }
+    if (!isMarkerOnlyMode) {
+      applyWorldBossOverlayPosition();
+    }
+  });
+
+  if (worldBossOverlayHeader) {
+    worldBossOverlayHeader.addEventListener('pointerdown', startWorldBossOverlayDrag);
+    worldBossOverlayHeader.addEventListener('pointermove', updateWorldBossOverlayDrag);
+    worldBossOverlayHeader.addEventListener('pointerup', stopWorldBossOverlayDrag);
+    worldBossOverlayHeader.addEventListener('pointercancel', stopWorldBossOverlayDrag);
+  }
+
+  window.addEventListener('pointermove', updateWorldBossOverlayDrag);
+  window.addEventListener('pointerup', stopWorldBossOverlayDrag);
+  window.addEventListener('pointercancel', stopWorldBossOverlayDrag);
+
+  applyMapMode();
+  updateFeatureAccessUi();
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      document.body.classList.add('app-ready');
+      window.setTimeout(() => {
+        void startTutorial();
+      }, 240);
+    });
+  });
+}
+
 async function bootstrap() {
   try {
     const canContinue = await runStartupUpdaterGate();
@@ -4117,406 +6108,17 @@ async function bootstrap() {
       return;
     }
 
-    uiSettings = await window.livemapApi.getUiSettings();
-    oreData = await window.livemapApi.getOreData();
-    isMarkerOnlyMode = Boolean(uiSettings?.markerOnlyMode);
-    isMarkerFrameVisible = Boolean(getViewSettings('markerView').frameVisible);
-
-      initMap();
-      buildOreLayers();
-      ensureMarkerCooldownTimer();
-      await applyCurrentViewSettings();
-
-      const oreCount = getMarkerEntries().reduce((sum, marker) => sum + marker.coordinates.length, 0);
-    setChannelStatus(null);
-    setStatusPill(markerStatusElement, `${oreCount} Marker`, 'marker');
-    setLiveStatus('Warten auf spielerkoordinate', 'waiting');
-    if (oreCount <= 0) {
-      setStatusPill(markerStatusElement, '0 Marker', 'marker');
-    }
-
-    window.livemapApi.onPlayerPosition((data) => {
-      updatePlayerMarker(data);
-    });
-
-    window.livemapApi.onAltarPosition((data) => {
-      upsertAltarEntry(data);
-    });
-
-      window.livemapApi.onPlayerError((message) => {
-        stopPlayerMarkerAnimation();
-        stopMarkerOnlyAnimation();
-        currentPlayerLatLng = null;
-        targetPlayerLatLng = null;
-        filteredPlayerPosition = null;
-        playerPosition = null;
-        markerOnlyTargetPosition = null;
-        markerOnlyDisplayPosition = null;
-        setLiveStatus('Warten auf spielerkoordinate', 'waiting');
-        coordXElement.textContent = '-';
-      coordZElement.textContent = '-';
-      coordYElement.textContent = '-';
-      console.error(message);
-    });
-
-    window.livemapApi.onInventoryUpdate((data) => {
-      updateInventoryPanel(data);
-    });
-
-    window.livemapApi.onInventoryError((message) => {
-      console.error(message);
-    });
-
-    window.livemapApi.onAltarError((message) => {
-      console.error(message);
-    });
-
+    startupGateFinished = true;
+    initializeAuthUi();
+    applyAuthState(await window.livemapApi.getAuthState());
     renderUpdaterState(await window.livemapApi.getUpdaterState());
-    playerPositionLockState = await window.livemapApi.getPlayerPositionLock();
-    updatePlayerLockButtonState();
     window.livemapApi.onUpdaterState((state) => {
       renderUpdaterState(state);
     });
-
-    if (playerCenterButton) {
-      playerCenterButton.addEventListener('click', () => {
-        centerMapOnPlayer();
-      });
-    }
-
-    if (findNearestButton) {
-      findNearestButton.addEventListener('click', () => {
-        toggleNearestMarkerWithRouteGuard();
-      });
-    }
-
-    if (routePlannerButton) {
-      routePlannerButton.addEventListener('click', () => {
-        window.livemapApi.openRoutePlanner();
-      });
-    }
-
-    if (altarTrackerButton) {
-      altarTrackerButton.addEventListener('click', () => {
-        void openAltarSelector();
-      });
-    }
-
-    if (altarBackdrop) {
-      altarBackdrop.addEventListener('click', () => {
-        void closeAltarOverlay();
-      });
-    }
-
-    if (altarCloseButton) {
-      altarCloseButton.addEventListener('click', () => {
-        void closeAltarOverlay();
-      });
-    }
-
-    if (altarSearchInput) {
-      altarSearchInput.addEventListener('input', (event) => {
-        altarSearchQuery = event.target.value || '';
-        renderAltarResults();
-      });
-    }
-
-    if (altarResultsList) {
-      altarResultsList.addEventListener('click', (event) => {
-        const button = event.target.closest('button[data-kind][data-altar-id]');
-        if (!button) {
-          return;
-        }
-
-        const kind = button.dataset.kind;
-        const altarId = button.dataset.altarId;
-        if (!altarId) {
-          return;
-        }
-
-        if (kind === 'center') {
-          centerMapOnAltarEntry(altarId);
-          return;
-        }
-
-        setSelectedAltar(kind, altarId);
-      });
-    }
-
-    if (altarClearSelectionButton) {
-      altarClearSelectionButton.addEventListener('click', () => {
-        clearSelectedAltars();
-      });
-    }
-
-    if (playerLockButton) {
-      playerLockButton.addEventListener('click', () => {
-        void saveCurrentPlayerLock();
-      });
-    }
-
-    if (routePlannerBackdrop) {
-      routePlannerBackdrop.addEventListener('click', () => {
-        closeRoutePlannerOverlay();
-      });
-    }
-
-    if (routePlannerCloseButton) {
-      routePlannerCloseButton.addEventListener('click', () => {
-        closeRoutePlannerOverlay();
-      });
-    }
-
-    if (routePlannerHeader) {
-      routePlannerHeader.addEventListener('pointerdown', startRoutePlannerDrag);
-      routePlannerHeader.addEventListener('pointermove', updateRoutePlannerDrag);
-      routePlannerHeader.addEventListener('pointerup', stopRoutePlannerDrag);
-      routePlannerHeader.addEventListener('pointercancel', stopRoutePlannerDrag);
-    }
-
-    if (confirmDialogCancel) {
-      confirmDialogCancel.addEventListener('click', () => {
-        closeConfirmDialog(false);
-      });
-    }
-
-    if (confirmDialogConfirm) {
-      confirmDialogConfirm.addEventListener('click', () => {
-        closeConfirmDialog(true);
-      });
-    }
-
-    if (routeGenerateButton) {
-      routeGenerateButton.addEventListener('click', () => {
-        syncRoutePlannerConfigFromInputs();
-        generateRouteSuggestions();
-        renderRouteResults();
-      });
-    }
-
-    if (routeAbortButton) {
-      routeAbortButton.addEventListener('click', () => {
-        abortRoute();
-      });
-    }
-
-    window.livemapApi.onTutorialAction((action) => {
-      if (action === 'border-enable') {
-        if (!isMarkerFrameVisible) {
-          toggleMarkerFrame();
-        }
-        void handleTutorialRequiredAction('border-enable');
-        return;
-      }
-
-      if (action === 'border-disable') {
-        if (isMarkerFrameVisible) {
-          toggleMarkerFrame();
-        }
-        void handleTutorialRequiredAction('border-disable');
-        return;
-      }
-
-      if (action === 'next') {
-        void advanceTutorial();
-        return;
-      }
-
-      if (action === 'skip') {
-        void skipTutorial();
-      }
-    });
-
-    if (routeMarkerList) {
-      routeMarkerList.addEventListener('change', () => {
-        syncRoutePlannerConfigFromInputs();
-      });
-    }
-
-    if (routeUsePlayerStartInput) {
-      routeUsePlayerStartInput.addEventListener('change', () => {
-        syncRoutePlannerConfigFromInputs();
-      });
-    }
-
-    const routeAltarConstraintInputs = [
-      routeRequirePersonalAltarInput,
-      routeRequireGuildAltarInput,
-      routeRequireBothAltarsInput,
-    ].filter(Boolean);
-    for (const input of routeAltarConstraintInputs) {
-      input.addEventListener('change', (event) => {
-        if (event.target.checked) {
-          applyRouteAltarConstraintSelection(event.target.id === 'routeRequireBothAltars'
-            ? 'both'
-            : event.target.id === 'routeRequireGuildAltar'
-              ? 'guild'
-              : 'personal');
-        }
-        syncRoutePlannerConfigFromInputs();
-      });
-    }
-
-    if (routeResultsList) {
-      routeResultsList.addEventListener('click', (event) => {
-        const button = event.target.closest('button[data-action]');
-        if (!button) {
-          return;
-        }
-
-        const routeId = button.dataset.routeId;
-        if (button.dataset.action === 'preview') {
-          previewRoute(routeId);
-          return;
-        }
-
-        if (button.dataset.action === 'start') {
-          startRoute(routeId);
-        }
-      });
-    }
-
-    window.livemapApi.onRoutePreview((route) => {
-      applyRoutePreview(route);
-    });
-    window.livemapApi.onRouteStart((route) => {
-      applyRouteStart(route);
-    });
-    window.livemapApi.onRouteAbort(() => {
-      abortRoute(false);
-    });
-    window.livemapApi.onRouteState((state) => {
-      if (activeRoute && state?.activeRoute) {
-        activeRoute.paused = Boolean(state.paused);
-        updateRoutePreviewAndGuidance();
-        scheduleMarkerOnlyCanvasDraw();
-      }
-    });
-
-    if (mapFrameButton) {
-      mapFrameButton.addEventListener('click', () => {
-        toggleMarkerFrame();
-        void handleTutorialRequiredAction(isMarkerFrameVisible ? 'border-enable' : 'border-disable');
-      });
-    }
-
-    if (resizeHandles) {
-      for (const handle of resizeHandles.querySelectorAll('.resize-handle')) {
-        handle.addEventListener('pointerdown', async (event) => {
-          event.preventDefault();
-          await startResizeSession(handle.dataset.resize, event);
-        });
-      }
-
-      window.addEventListener('pointermove', (event) => {
-        handleResizeMove(event);
-      });
-      window.addEventListener('pointerup', stopResizeSession);
-      window.addEventListener('pointercancel', stopResizeSession);
-    }
-
-    if (opacityButton) {
-      const opacity = await window.livemapApi.getWindowOpacity();
-      updateOpacityLabel(opacity);
-      opacityButton.addEventListener('click', (event) => {
-        event.stopPropagation();
-        hideOpacityPopovers();
-        toggleOpacityPopover(opacityPopover);
-      });
-    }
-
-    if (opacitySlider) {
-      opacitySlider.addEventListener('input', async (event) => {
-        const value = Number(event.target.value);
-        const appliedValue = await window.livemapApi.setWindowOpacity(value);
-        updateOpacityLabel(appliedValue);
-        saveCurrentViewSettings({ windowOpacity: appliedValue });
-      });
-    }
-
-    if (tutorialButton) {
-      tutorialButton.addEventListener('click', () => {
-        void startTutorial(true);
-      });
-    }
-
-    if (minimizeButton) {
-      minimizeButton.addEventListener('click', () => {
-        window.livemapApi.minimizeWindow();
-      });
-    }
-
-    if (closeButton) {
-      closeButton.addEventListener('click', () => {
-        window.livemapApi.closeWindow();
-      });
-    }
-
-    if (updateToastInstallButton) {
-      updateToastInstallButton.addEventListener('click', async () => {
-        updateToastInstallButton.disabled = true;
-        try {
-          await window.livemapApi.installUpdateNow();
-        } finally {
-          updateToastInstallButton.disabled = false;
-        }
-      });
-    }
-
-    if (mapModeButton) {
-      mapModeButton.addEventListener('click', () => {
-        void toggleMapMode();
-      });
-    }
-
-    if (compactMapModeButton) {
-      compactMapModeButton.addEventListener('click', () => {
-        void toggleMapMode();
-      });
-    }
-
-      document.addEventListener('click', (event) => {
-        const clickedPopover = (
-        (opacityPopover && opacityPopover.contains(event.target))
-        );
-        const clickedButton = (
-        (opacityButton && opacityButton.contains(event.target))
-        );
-
-      if (!opacityPopover) {
-          return;
-        }
-
-        if (!clickedPopover && !clickedButton) {
-          hideOpacityPopovers();
-        }
-
-        if (openLegendCategory
-          && legend
-          && !legend.contains(event.target)
-          && (!legendOverlayRoot || !legendOverlayRoot.contains(event.target))) {
-          closeLegendMenu();
-        }
-      });
-
-    window.addEventListener('resize', () => {
-      if (isMarkerOnlyMode && targetPlayerLatLng) {
-        scheduleMarkerOnlyCanvasDraw();
-      }
-    });
-
-      applyMapMode();
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          document.body.classList.add('app-ready');
-          window.setTimeout(() => {
-            void startTutorial();
-          }, 240);
-        });
-      });
-    } catch (error) {
-      setLiveStatus('Warten auf spielerkoordinate', 'waiting');
-      throw error;
+    document.body.classList.add('app-ready');
+  } catch (error) {
+    setLiveStatus('Warten auf spielerkoordinate', 'waiting');
+    throw error;
   }
 }
 

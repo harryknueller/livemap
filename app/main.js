@@ -2,6 +2,7 @@ const { app, BrowserWindow, ipcMain, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
+const { createAuthManager } = require('./auth');
 const { createUpdater } = require('./updater');
 
 let playerProcess;
@@ -9,10 +10,40 @@ let inventoryProcess;
 let altarProcess;
 let mainWindow = null;
 let plannerWindow = null;
+let altarWindow = null;
+let worldBossWindow = null;
 let tutorialWindow = null;
 let tutorialStepPayload = null;
+let worldBossWindowTransientBounds = false;
+let authRefreshInterval = null;
+let authRefreshInFlight = false;
 let settings;
 let updater;
+let authManager;
+let authState = {
+  configured: false,
+  loading: false,
+  configError: null,
+  session: {
+    loggedIn: false,
+    userId: null,
+    email: null,
+    displayName: null,
+    avatarUrl: null,
+  },
+  access: {
+    role: 'public',
+    blocked: false,
+    features: {
+      findNearest: false,
+      routePlanner: false,
+      altars: false,
+      worldBossTimer: false,
+      admin: false,
+    },
+    message: 'Bitte mit Discord anmelden.',
+  },
+};
 let lastPlayerPosition = null;
 let routeState = {
   activeRoute: null,
@@ -20,15 +51,68 @@ let routeState = {
   paused: false,
 };
 
+function hasFeatureAccess(featureKey) {
+  return Boolean(authState?.access?.features?.[featureKey]);
+}
+
+function isAuthenticatedAndAllowed() {
+  return Boolean(authState?.session?.loggedIn && authState?.session?.userId && !authState?.access?.blocked);
+}
+
+function stopAuthRefreshInterval() {
+  if (authRefreshInterval) {
+    clearInterval(authRefreshInterval);
+    authRefreshInterval = null;
+  }
+}
+
+function startAuthRefreshInterval() {
+  stopAuthRefreshInterval();
+  if (!authState?.session?.loggedIn || !authManager) {
+    return;
+  }
+
+  authRefreshInterval = setInterval(async () => {
+    if (authRefreshInFlight || !authState?.session?.loggedIn || !authManager) {
+      return;
+    }
+
+    authRefreshInFlight = true;
+    try {
+      await authManager.refreshAccess();
+    } catch (_error) {
+      // Ignore transient polling errors and retry on the next interval.
+    } finally {
+      authRefreshInFlight = false;
+    }
+  }, AUTH_REFRESH_INTERVAL_MS);
+}
+
+function resetRouteState() {
+  routeState = {
+    activeRoute: null,
+    previewRoute: null,
+    paused: false,
+  };
+}
+
 const DEFAULT_WINDOW_BOUNDS = {
   width: 1100,
   height: 820,
 };
 
+const AUTH_REFRESH_INTERVAL_MS = 10000;
+
 const DEFAULT_SETTINGS = {
   markerOnlyMode: false,
   altarTrackingEnabled: false,
   markerCooldownsByChannel: {},
+  worldBossOverlayWindow: {
+    bounds: {
+      width: 320,
+      height: 460,
+    },
+  },
   normalView: {
     windowOpacity: 100,
     activeOreFilters: [],
@@ -99,7 +183,7 @@ function writePlayerLock(payload) {
   return readPlayerLock();
 }
 
-function sanitizeBounds(bounds, fallback) {
+function sanitizeBounds(bounds, fallback, minWidth = 260, minHeight = 220) {
   const safeFallback = fallback || DEFAULT_WINDOW_BOUNDS;
   const x = Number(bounds?.x);
   const y = Number(bounds?.y);
@@ -109,9 +193,35 @@ function sanitizeBounds(bounds, fallback) {
   return {
     x: Number.isFinite(x) ? Math.round(x) : safeFallback.x,
     y: Number.isFinite(y) ? Math.round(y) : safeFallback.y,
-    width: Number.isFinite(width) && width >= 260 ? Math.round(width) : safeFallback.width,
-    height: Number.isFinite(height) && height >= 220 ? Math.round(height) : safeFallback.height,
+    width: Number.isFinite(width) && width >= minWidth ? Math.round(width) : safeFallback.width,
+    height: Number.isFinite(height) && height >= minHeight ? Math.round(height) : safeFallback.height,
   };
+}
+
+function saveWorldBossOverlayWindowBounds(bounds) {
+  if (!settings) {
+    return;
+  }
+
+  const fallback = {
+    ...DEFAULT_SETTINGS.worldBossOverlayWindow.bounds,
+    x: bounds?.x,
+    y: bounds?.y,
+  };
+  settings = {
+    ...settings,
+    worldBossOverlayWindow: {
+      ...(settings.worldBossOverlayWindow || {}),
+      bounds: sanitizeBounds(
+        bounds,
+        fallback,
+        92,
+        140,
+      ),
+    },
+  };
+  saveSettings();
+  broadcastUiSettings();
 }
 
 function getSettingsPath() {
@@ -151,6 +261,16 @@ function loadSettings() {
         frameVisible: Boolean(markerView.frameVisible),
         bounds: sanitizeBounds(markerView.bounds, DEFAULT_SETTINGS.markerView.bounds),
       },
+      worldBossOverlayWindow: {
+        ...DEFAULT_SETTINGS.worldBossOverlayWindow,
+        ...(payload.worldBossOverlayWindow || {}),
+        bounds: sanitizeBounds(
+          payload.worldBossOverlayWindow?.bounds,
+          DEFAULT_SETTINGS.worldBossOverlayWindow.bounds,
+          92,
+          140,
+        ),
+      },
     };
   } catch (_error) {
       settings = {
@@ -163,6 +283,10 @@ function loadSettings() {
       markerView: {
         ...DEFAULT_SETTINGS.markerView,
         bounds: { ...DEFAULT_SETTINGS.markerView.bounds },
+      },
+      worldBossOverlayWindow: {
+        ...DEFAULT_SETTINGS.worldBossOverlayWindow,
+        bounds: { ...DEFAULT_SETTINGS.worldBossOverlayWindow.bounds },
       },
     };
   }
@@ -205,6 +329,7 @@ function updateSettings(patch) {
     },
   };
   saveSettings();
+  broadcastUiSettings();
 }
 
 function sendToWindow(window, channel, payload) {
@@ -225,6 +350,13 @@ function broadcastRouteState() {
   sendToWindow(plannerWindow, 'route-state', routeState);
 }
 
+function broadcastUiSettings() {
+  sendToWindow(mainWindow, 'ui-settings-updated', settings);
+  sendToWindow(plannerWindow, 'ui-settings-updated', settings);
+  sendToWindow(altarWindow, 'ui-settings-updated', settings);
+  sendToWindow(worldBossWindow, 'ui-settings-updated', settings);
+}
+
 function stopBackgroundProcesses() {
   if (playerProcess && !playerProcess.killed) {
     playerProcess.kill();
@@ -240,6 +372,89 @@ function stopBackgroundProcesses() {
 function broadcastUpdaterState(state) {
   sendToWindow(mainWindow, 'updater-state', state);
   sendToWindow(plannerWindow, 'updater-state', state);
+  sendToWindow(altarWindow, 'updater-state', state);
+  sendToWindow(worldBossWindow, 'updater-state', state);
+}
+
+function broadcastAuthState(state = authState) {
+  sendToWindow(mainWindow, 'auth-state', state);
+  sendToWindow(plannerWindow, 'auth-state', state);
+  sendToWindow(altarWindow, 'auth-state', state);
+  sendToWindow(worldBossWindow, 'auth-state', state);
+}
+
+function syncRuntimeAccess() {
+  if (!authState?.session?.loggedIn) {
+    stopAuthRefreshInterval();
+    stopBackgroundProcesses();
+    resetRouteState();
+    sendToWindow(mainWindow, 'route-abort');
+    broadcastRouteState();
+    if (plannerWindow && !plannerWindow.isDestroyed()) {
+      plannerWindow.close();
+    }
+    if (altarWindow && !altarWindow.isDestroyed()) {
+      altarWindow.close();
+    }
+    if (worldBossWindow && !worldBossWindow.isDestroyed()) {
+      worldBossWindow.close();
+    }
+    return;
+  }
+
+  startAuthRefreshInterval();
+
+  if (!isAuthenticatedAndAllowed()) {
+    stopBackgroundProcesses();
+    resetRouteState();
+    sendToWindow(mainWindow, 'route-abort');
+    broadcastRouteState();
+    if (plannerWindow && !plannerWindow.isDestroyed()) {
+      plannerWindow.close();
+    }
+    if (altarWindow && !altarWindow.isDestroyed()) {
+      altarWindow.close();
+    }
+    if (worldBossWindow && !worldBossWindow.isDestroyed()) {
+      worldBossWindow.close();
+    }
+    return;
+  }
+
+  if (!hasFeatureAccess('routePlanner')) {
+    resetRouteState();
+    sendToWindow(mainWindow, 'route-abort');
+    broadcastRouteState();
+    if (plannerWindow && !plannerWindow.isDestroyed()) {
+      plannerWindow.close();
+    }
+  }
+
+  if (!hasFeatureAccess('altars')) {
+    if (settings?.altarTrackingEnabled) {
+      updateSettings({ altarTrackingEnabled: false });
+    }
+    stopAltarStream();
+    if (altarWindow && !altarWindow.isDestroyed()) {
+      altarWindow.close();
+    }
+  }
+
+  if (!hasFeatureAccess('worldBossTimer') && worldBossWindow && !worldBossWindow.isDestroyed()) {
+    worldBossWindow.close();
+  }
+
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (!playerProcess) {
+      startPlayerStream(mainWindow);
+    }
+    if (!inventoryProcess) {
+      startInventoryStream(mainWindow);
+    }
+    if (hasFeatureAccess('altars') && settings?.altarTrackingEnabled && !altarProcess) {
+      startAltarStream(mainWindow);
+    }
+  }
 }
 
 function loadOreData() {
@@ -282,6 +497,10 @@ function getPythonCommand() {
 }
 
 function startPlayerStream(window) {
+  if (!isAuthenticatedAndAllowed()) {
+    return;
+  }
+
   const scriptPath = path.join(__dirname, '..', 'scripts', 'playerposition.py');
   playerProcess = spawn(getPythonCommand(), [scriptPath, '--json'], {
     cwd: __dirname,
@@ -331,6 +550,10 @@ function startPlayerStream(window) {
 }
 
 function startInventoryStream(window) {
+  if (!isAuthenticatedAndAllowed()) {
+    return;
+  }
+
   const scriptPath = path.join(__dirname, '..', 'scripts', 'inventar.py');
   inventoryProcess = spawn(getPythonCommand(), [scriptPath, '--json'], {
     cwd: __dirname,
@@ -371,6 +594,10 @@ function startInventoryStream(window) {
 }
 
 function startAltarStream(window) {
+  if (!isAuthenticatedAndAllowed() || !hasFeatureAccess('altars')) {
+    return true;
+  }
+
   if (altarProcess && !altarProcess.killed) {
     return true;
   }
@@ -394,9 +621,11 @@ function startAltarStream(window) {
 
       try {
         const data = JSON.parse(line);
-        sendToWindow(window, 'altar-position', data);
+        sendToWindow(mainWindow, 'altar-position', data);
+        sendToWindow(altarWindow, 'altar-position', data);
       } catch (_error) {
-        sendToWindow(window, 'altar-error', `Ungueltige Altar-JSON-Zeile: ${line}`);
+        sendToWindow(mainWindow, 'altar-error', `Ungueltige Altar-JSON-Zeile: ${line}`);
+        sendToWindow(altarWindow, 'altar-error', `Ungueltige Altar-JSON-Zeile: ${line}`);
       }
     }
   });
@@ -404,12 +633,14 @@ function startAltarStream(window) {
   altarProcess.stderr.on('data', (chunk) => {
     const message = chunk.toString().trim();
     if (message) {
-      sendToWindow(window, 'altar-error', message);
+      sendToWindow(mainWindow, 'altar-error', message);
+      sendToWindow(altarWindow, 'altar-error', message);
     }
   });
 
   altarProcess.on('exit', (code) => {
-    sendToWindow(window, 'altar-error', `Altar-Stream beendet mit Code ${code ?? 'null'}`);
+    sendToWindow(mainWindow, 'altar-error', `Altar-Stream beendet mit Code ${code ?? 'null'}`);
+    sendToWindow(altarWindow, 'altar-error', `Altar-Stream beendet mit Code ${code ?? 'null'}`);
     altarProcess = null;
   });
 
@@ -423,6 +654,10 @@ function stopAltarStream() {
 }
 
 function setAltarTrackingEnabled(active) {
+  if (!hasFeatureAccess('altars')) {
+    return settings;
+  }
+
   const nextActive = Boolean(active);
   updateSettings({ altarTrackingEnabled: nextActive });
 
@@ -497,11 +732,13 @@ function createWindow() {
   win.on('close', persistWindowBounds);
 
   win.loadFile('index.html');
-  startPlayerStream(win);
-  startInventoryStream(win);
-  if (updater) {
-    sendToWindow(win, 'updater-state', updater.getState());
-  }
+  win.webContents.once('did-finish-load', () => {
+    if (updater) {
+      sendToWindow(win, 'updater-state', updater.getState());
+    }
+    sendToWindow(win, 'auth-state', authState);
+  });
+  syncRuntimeAccess();
 
   win.on('closed', () => {
     if (mainWindow === win) {
@@ -509,6 +746,12 @@ function createWindow() {
     }
     if (plannerWindow && !plannerWindow.isDestroyed()) {
       plannerWindow.close();
+    }
+    if (altarWindow && !altarWindow.isDestroyed()) {
+      altarWindow.close();
+    }
+    if (worldBossWindow && !worldBossWindow.isDestroyed()) {
+      worldBossWindow.close();
     }
     if (tutorialWindow && !tutorialWindow.isDestroyed()) {
       tutorialWindow.close();
@@ -562,6 +805,7 @@ function createPlannerWindow() {
       if (updater) {
         sendToWindow(plannerWindow, 'updater-state', updater.getState());
       }
+      sendToWindow(plannerWindow, 'auth-state', authState);
     }
   });
   plannerWindow.on('show', keepPlannerOnTop);
@@ -573,6 +817,144 @@ function createPlannerWindow() {
   });
 
   return plannerWindow;
+}
+
+function createAltarWindow() {
+  if (altarWindow && !altarWindow.isDestroyed()) {
+    altarWindow.focus();
+    return altarWindow;
+  }
+
+  const bounds = mainWindow && !mainWindow.isDestroyed() ? mainWindow.getBounds() : DEFAULT_WINDOW_BOUNDS;
+  altarWindow = new BrowserWindow({
+    width: 980,
+    height: 760,
+    x: Math.round(bounds.x + Math.max(48, (bounds.width - 980) / 2)),
+    y: Math.round(bounds.y + Math.max(48, (bounds.height - 760) / 2)),
+    minWidth: 760,
+    minHeight: 520,
+    frame: false,
+    transparent: true,
+    resizable: true,
+    hasShadow: true,
+    backgroundColor: '#00000000',
+    alwaysOnTop: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+
+  altarWindow.loadFile('altar-selector.html');
+  const keepAltarOnTop = () => {
+    if (!altarWindow || altarWindow.isDestroyed()) {
+      return;
+    }
+    altarWindow.setAlwaysOnTop(true, 'screen-saver');
+    altarWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  };
+
+  altarWindow.once('ready-to-show', () => {
+    if (altarWindow && !altarWindow.isDestroyed()) {
+      keepAltarOnTop();
+      altarWindow.show();
+      sendToWindow(altarWindow, 'auth-state', authState);
+      sendToWindow(altarWindow, 'ui-settings-updated', settings);
+      if (updater) {
+        sendToWindow(altarWindow, 'updater-state', updater.getState());
+      }
+    }
+  });
+  altarWindow.on('show', keepAltarOnTop);
+  altarWindow.on('focus', keepAltarOnTop);
+  altarWindow.on('closed', () => {
+    altarWindow = null;
+    setAltarTrackingEnabled(false);
+  });
+
+  return altarWindow;
+}
+
+function createWorldBossWindow() {
+  if (worldBossWindow && !worldBossWindow.isDestroyed()) {
+    worldBossWindow.focus();
+    return worldBossWindow;
+  }
+
+  const mainBounds = mainWindow && !mainWindow.isDestroyed() ? mainWindow.getBounds() : DEFAULT_WINDOW_BOUNDS;
+  const display = screen.getDisplayNearestPoint({
+    x: mainBounds.x + Math.round(mainBounds.width / 2),
+    y: mainBounds.y + Math.round(mainBounds.height / 2),
+  });
+  const workArea = display?.workArea || display?.bounds || screen.getPrimaryDisplay().workArea;
+  const fallbackBounds = {
+    x: workArea.x + 12,
+    y: workArea.y + Math.max(24, Math.round((workArea.height - DEFAULT_SETTINGS.worldBossOverlayWindow.bounds.height) / 2)),
+    width: DEFAULT_SETTINGS.worldBossOverlayWindow.bounds.width,
+    height: DEFAULT_SETTINGS.worldBossOverlayWindow.bounds.height,
+  };
+  const configuredBounds = sanitizeBounds(settings?.worldBossOverlayWindow?.bounds, fallbackBounds, 92, 140);
+  worldBossWindow = new BrowserWindow({
+    width: configuredBounds.width,
+    height: configuredBounds.height,
+    x: configuredBounds.x,
+    y: configuredBounds.y,
+    minWidth: 92,
+    minHeight: 140,
+    frame: false,
+    transparent: true,
+    resizable: true,
+    hasShadow: true,
+    skipTaskbar: true,
+    backgroundColor: '#00000000',
+    alwaysOnTop: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+
+  worldBossWindow.loadFile('worldboss-window.html');
+  const keepWorldBossOnTop = () => {
+    if (!worldBossWindow || worldBossWindow.isDestroyed()) {
+      return;
+    }
+    worldBossWindow.setAlwaysOnTop(true, 'screen-saver');
+    worldBossWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  };
+
+  worldBossWindow.once('ready-to-show', () => {
+    if (worldBossWindow && !worldBossWindow.isDestroyed()) {
+      keepWorldBossOnTop();
+      worldBossWindow.show();
+      sendToWindow(worldBossWindow, 'auth-state', authState);
+      sendToWindow(worldBossWindow, 'ui-settings-updated', settings);
+      if (updater) {
+        sendToWindow(worldBossWindow, 'updater-state', updater.getState());
+      }
+    }
+  });
+  worldBossWindow.on('show', keepWorldBossOnTop);
+  worldBossWindow.on('focus', keepWorldBossOnTop);
+  worldBossWindow.on('move', () => {
+    if (!worldBossWindow || worldBossWindow.isDestroyed() || worldBossWindowTransientBounds) {
+      return;
+    }
+    saveWorldBossOverlayWindowBounds(worldBossWindow.getBounds());
+  });
+  worldBossWindow.on('resize', () => {
+    if (!worldBossWindow || worldBossWindow.isDestroyed() || worldBossWindowTransientBounds) {
+      return;
+    }
+    saveWorldBossOverlayWindowBounds(worldBossWindow.getBounds());
+  });
+  worldBossWindow.on('closed', () => {
+    worldBossWindow = null;
+  });
+
+  return worldBossWindow;
 }
 
 function createTutorialWindow() {
@@ -644,12 +1026,22 @@ function createTutorialWindow() {
 
 app.whenReady().then(() => {
   loadSettings();
+  authManager = createAuthManager({
+    app,
+    appDir: __dirname,
+    onStateChange: (nextState) => {
+      authState = nextState;
+      broadcastAuthState(nextState);
+      syncRuntimeAccess();
+    },
+  });
   updater = createUpdater({
     app,
     getSettings: () => settings,
     updateSettings,
     onStateChange: broadcastUpdaterState,
   });
+  authState = authManager.getState();
   ipcMain.handle('get-ore-data', () => loadOreData());
   ipcMain.handle('ui-settings-get', () => settings);
   ipcMain.handle('ui-settings-set', (_event, patch) => {
@@ -661,6 +1053,22 @@ app.whenReady().then(() => {
     return writePlayerLock(payload || {});
   });
   ipcMain.handle('altar-tracking-set', (_event, active) => setAltarTrackingEnabled(active));
+  ipcMain.handle('auth-state-get', () => authState);
+  ipcMain.handle('auth-login-discord', async (_event, options) => {
+    await authManager.signInWithDiscord(options || {});
+    return authState;
+  });
+  ipcMain.handle('auth-logout', async () => {
+    await authManager.signOut();
+    return authState;
+  });
+  ipcMain.handle('auth-refresh-access', async () => {
+    await authManager.refreshAccess();
+    return authState;
+  });
+  ipcMain.handle('auth-set-auto-login', async (_event, enabled) => authManager.setAutoLogin(enabled));
+  ipcMain.handle('admin-profiles-list', async () => authManager.listProfiles());
+  ipcMain.handle('admin-profile-update', async (_event, payload) => authManager.updateProfileAccess(payload || {}));
   ipcMain.handle('window-minimize', () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.minimize();
@@ -729,34 +1137,50 @@ app.whenReady().then(() => {
       const currentBounds = targetWindow.getBounds();
       const nextX = Number(bounds.x);
       const nextY = Number(bounds.y);
+      const minWidth = targetWindow === worldBossWindow ? 92 : 260;
+      const minHeight = targetWindow === worldBossWindow ? 140 : 220;
       const nextBounds = {
         x: Number.isFinite(nextX) ? Math.round(nextX) : currentBounds.x,
         y: Number.isFinite(nextY) ? Math.round(nextY) : currentBounds.y,
-        width: Math.max(260, Math.round(bounds.width)),
-        height: Math.max(220, Math.round(bounds.height)),
+        width: Math.max(minWidth, Math.round(bounds.width)),
+        height: Math.max(minHeight, Math.round(bounds.height)),
       };
+      const shouldPersist = bounds.persist !== false;
+      if (targetWindow === worldBossWindow && !shouldPersist) {
+        worldBossWindowTransientBounds = true;
+      }
       targetWindow.setBounds(nextBounds);
       const appliedBounds = targetWindow.getBounds();
-      const viewKey = bounds.viewKey || (settings?.markerOnlyMode ? 'markerView' : 'normalView');
-      updateSettings({
-        [viewKey]: {
-          bounds: {
-            x: appliedBounds.x,
-            y: appliedBounds.y,
-            width: appliedBounds.width,
-            height: appliedBounds.height,
+      if (targetWindow === worldBossWindow) {
+        if (shouldPersist) {
+          saveWorldBossOverlayWindowBounds(appliedBounds);
+        }
+        worldBossWindowTransientBounds = false;
+      } else if (shouldPersist) {
+        const viewKey = bounds.viewKey || (settings?.markerOnlyMode ? 'markerView' : 'normalView');
+        updateSettings({
+          [viewKey]: {
+            bounds: {
+              x: appliedBounds.x,
+              y: appliedBounds.y,
+              width: appliedBounds.width,
+              height: appliedBounds.height,
+            },
           },
-        },
-      });
+        });
+      }
       return appliedBounds;
     }
 
     return { x: 0, y: 0, ...DEFAULT_WINDOW_BOUNDS };
   });
   ipcMain.handle('route-planner-open', () => {
+    if (!hasFeatureAccess('routePlanner')) {
+      return { ok: false, error: 'access_denied' };
+    }
     createPlannerWindow();
     broadcastRouteState();
-    return true;
+    return { ok: true };
   });
   ipcMain.handle('route-planner-close', () => {
     if (plannerWindow && !plannerWindow.isDestroyed()) {
@@ -764,8 +1188,38 @@ app.whenReady().then(() => {
     }
     return true;
   });
+  ipcMain.handle('altar-selector-open', () => {
+    if (!hasFeatureAccess('altars')) {
+      return { ok: false, error: 'access_denied' };
+    }
+    createAltarWindow();
+    return { ok: true };
+  });
+  ipcMain.handle('altar-selector-close', () => {
+    if (altarWindow && !altarWindow.isDestroyed()) {
+      altarWindow.close();
+    }
+    return true;
+  });
+  ipcMain.handle('worldboss-window-open', () => {
+    createWorldBossWindow();
+    return { ok: true };
+  });
+  ipcMain.handle('worldboss-window-close', () => {
+    if (worldBossWindow && !worldBossWindow.isDestroyed()) {
+      worldBossWindow.close();
+    }
+    return true;
+  });
+  ipcMain.handle('altar-focus-request', (_event, payload) => {
+    sendToWindow(mainWindow, 'altar-focus-request', payload || null);
+    return true;
+  });
   ipcMain.handle('route-state-get', () => routeState);
   ipcMain.handle('route-preview-set', (_event, route) => {
+    if (!hasFeatureAccess('routePlanner')) {
+      return false;
+    }
     routeState = {
       ...routeState,
       previewRoute: route || null,
@@ -775,6 +1229,9 @@ app.whenReady().then(() => {
     return true;
   });
   ipcMain.handle('route-start-set', (_event, route) => {
+    if (!hasFeatureAccess('routePlanner')) {
+      return false;
+    }
     routeState = {
       activeRoute: route || null,
       previewRoute: route || null,
@@ -785,6 +1242,10 @@ app.whenReady().then(() => {
     return true;
   });
   ipcMain.handle('route-abort', () => {
+    if (!hasFeatureAccess('routePlanner')) {
+      resetRouteState();
+      return true;
+    }
     routeState = {
       activeRoute: null,
       previewRoute: null,
@@ -795,6 +1256,9 @@ app.whenReady().then(() => {
     return true;
   });
   ipcMain.handle('route-pause-toggle', () => {
+    if (!hasFeatureAccess('routePlanner')) {
+      return false;
+    }
     routeState = {
       ...routeState,
       paused: !routeState.paused,
@@ -870,8 +1334,10 @@ app.whenReady().then(() => {
     }
     return started;
   });
-  createWindow();
-  updater.checkForUpdates();
+  authManager.initialize().finally(() => {
+    createWindow();
+    updater.checkForUpdates();
+  });
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -881,6 +1347,7 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
+  stopAuthRefreshInterval();
   stopBackgroundProcesses();
 
   if (process.platform !== 'darwin') {
@@ -889,6 +1356,7 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', async (event) => {
+  stopAuthRefreshInterval();
   if (!updater) {
     return;
   }

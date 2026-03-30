@@ -23,6 +23,7 @@ set "NPM_CMD="
 set "NODE_BIN_DIR="
 set "NODE_VERSION="
 set "NPM_VERSION="
+set "NPM_INSTALL_RESULT="
 set "INSTALL_STEP=Initialization"
 set "ERROR_MESSAGE="
 
@@ -177,8 +178,7 @@ echo ------------------------------------------------------------
 echo [STEP] %INSTALL_STEP%
 echo ------------------------------------------------------------
 pushd "%APP_DIR%"
-call !NPM_CMD! install
-set "NPM_INSTALL_RESULT=!ERRORLEVEL!"
+call :install_node_dependencies
 popd
 if not "!NPM_INSTALL_RESULT!"=="0" set "ERROR_MESSAGE=npm install failed." & goto :fail
 if not exist "%APP_DIR%\node_modules\" set "ERROR_MESSAGE=app\node_modules was not created." & goto :fail
@@ -261,10 +261,10 @@ if not errorlevel 1 (
     for /f "delims=" %%i in ('where node 2^>nul') do if not defined NODE_BIN_DIR set "NODE_BIN_DIR=%%~dpi"
   )
 )
-where npm >nul 2>nul
+where npm.cmd >nul 2>nul
 if not errorlevel 1 (
-  npm -v >nul 2>nul
-  if not errorlevel 1 set "NPM_CMD=npm"
+  npm.cmd -v >nul 2>nul
+  if not errorlevel 1 set "NPM_CMD=npm.cmd"
 )
 if defined NODE_CMD if defined NPM_CMD exit /b 0
 if exist "%ProgramFiles%\nodejs\node.exe" set "NODE_CMD="%ProgramFiles%\nodejs\node.exe""
@@ -286,6 +286,23 @@ if "!NODE_BIN_DIR:~-1!"=="\" set "NODE_BIN_DIR=!NODE_BIN_DIR:~0,-1!"
 echo ;!PATH!; | find /I ";!NODE_BIN_DIR!;" >nul
 if errorlevel 1 set "PATH=!NODE_BIN_DIR!;!PATH!"
 exit /b 0
+
+:install_node_dependencies
+set "NPM_INSTALL_RESULT=1"
+set "NPM_ATTEMPT=1"
+:npm_install_attempt
+echo [INFO] npm install attempt !NPM_ATTEMPT! of 3...
+call !NPM_CMD! install --no-audit --prefer-offline --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000
+set "NPM_INSTALL_RESULT=!ERRORLEVEL!"
+if "!NPM_INSTALL_RESULT!"=="0" exit /b 0
+if "!NPM_ATTEMPT!"=="3" exit /b 0
+echo [WARNING] npm install failed with exit code !NPM_INSTALL_RESULT!.
+echo [INFO] Verifying npm cache before retry...
+call !NPM_CMD! cache verify
+set /a NPM_ATTEMPT+=1
+echo [INFO] Waiting a moment before retry...
+timeout /t 3 /nobreak >nul
+goto :npm_install_attempt
 
 :fail
 echo.
