@@ -2,7 +2,20 @@ const fs = require('fs');
 const http = require('http');
 const path = require('path');
 const { BrowserWindow, shell } = require('electron');
-const { createClient } = require('@supabase/supabase-js');
+
+function loadSupabaseModule() {
+  try {
+    return require('@supabase/supabase-js');
+  } catch (moduleError) {
+    try {
+      return require(path.join(__dirname, 'vendor-node-modules', '@supabase', 'supabase-js'));
+    } catch (_vendorError) {
+      throw moduleError;
+    }
+  }
+}
+
+const { createClient } = loadSupabaseModule();
 
 const SESSION_FILE_NAME = 'supabase-session.json';
 const PREFERENCES_FILE_NAME = 'auth-preferences.json';
